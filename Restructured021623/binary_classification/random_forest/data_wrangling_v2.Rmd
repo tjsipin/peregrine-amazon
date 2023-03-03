@@ -1,0 +1,237 @@
+---
+title: "data wrangling v2"
+author: "TJ Sipin"
+date: "2023-02-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(tidymodels)
+library(knitr)
+library(kableExtra)
+```
+
+# Data
+
+```{r data}
+data <- readRDS("~/peregrine_amazon/Restructured021623/data/annual/incidence") %>% 
+  select(-c(Chikungunya, Dengue:Zika, OptTemp_Obs:Malaria_OptTemp)) %>% 
+  select(Code, Year, Country, Name, has_CL, Cutaneous.Leishmaniasis, everything())
+```
+
+## Presence- and absence-municipios
+
+```{r}
+monthly <- read.csv("~/peregrine_amazon/data/monthly_df.csv") %>% 
+  filter(Code %in% data$Code)
+
+monthly_incidence <- monthly %>% 
+  filter(Code %in% data$Code) %>%
+  mutate(has_CL = case_when(Cutaneous.Leishmaniasis > 0 ~ 1,
+                            Cutaneous.Leishmaniasis == 0 ~ 0)) %>% 
+  group_by(Code, Year) %>% 
+  mutate(CL_in_country_year = case_when(sum(has_CL) > 0 ~ 1,
+                                        sum(has_CL) == 0 ~ 0)) %>% 
+  ungroup()
+
+
+monthly_incidence_v2 <- monthly_incidence %>% 
+  select(Country, Year, CL_in_country_year) %>% 
+  group_by(Country, Year) %>% 
+  summarise(percent_CL = sum(CL_in_country_year)/n()) %>% 
+  ungroup()
+
+monthly_incidence_per_year_country <- ggplot(monthly_incidence_v2) + 
+  geom_line(aes(Year, percent_CL, color = Country)) + 
+  ylim(c(0,1))
+
+# Full
+
+monthly_incidence_full <- monthly %>% 
+  # remove this filter below
+  # filter(Code %in% data$Code) %>% 
+  mutate(has_CL = case_when(Cutaneous.Leishmaniasis > 0 ~ 1,
+                            Cutaneous.Leishmaniasis == 0 ~ 0)) %>% 
+  group_by(Code, Year) %>% 
+  mutate(CL_in_country_year = case_when(sum(has_CL) > 0 ~ 1,
+                                        sum(has_CL) == 0 ~ 0)) %>% 
+  ungroup()
+
+monthly_incidence_full_v2 <- monthly_incidence_full %>% 
+  select(Country, Year, CL_in_country_year) %>% 
+  group_by(Country, Year) %>% 
+  summarise(percent_CL = sum(CL_in_country_year)/n()) %>% 
+  ungroup()
+
+monthly_incidence_full_per_year_country <- ggplot(monthly_incidence_full_v2) +
+  geom_line(aes(Year, percent_CL, color = Country)) + 
+  ylim(c(0,1))
+```
+
+## Introduce delta variables
+
+Take delta variables of $x_{ijt}$ with respect to year $t$. Let $t_0 = 2000$:
+
+$$
+\Delta^{t_0}_{x_{ij}} = \Delta^{2000}_{x_{ij}} = \frac{x_{ijt} - x_{ijt_0}}{t - t_0} = \frac{x_{ijt} - x_{ij2000}}{t - 2000},
+$$ where $i$ denotes explanatory variable $i$ and $j$ denotes municipio $j$.
+
+```{r}
+data_v2 <- data %>% 
+  group_by(Code) %>% 
+  mutate(delta_2000_pland_forest = pland_forest - pland_forest[1],
+         delta_2000_area_mn_forest = area_mn_forest - area_mn_forest[1],
+         delta_2000_te_forest = te_forest - te_forest[1],
+         delta_2000_enn_mn_forest = enn_mn_forest - enn_mn_forest[1]) %>% 
+  ungroup()
+
+data_v2 %>% 
+  select(Year, pland_forest, delta_2000_pland_forest, 
+         area_mn_forest, delta_2000_area_mn_forest, 
+         te_forest, delta_2000_te_forest, enn_mn_forest, 
+         delta_2000_enn_mn_forest, everything())
+```
+
+Now get 1- and 5-year delta variables.
+
+```{r}
+data_v3 <- data_v2 %>% 
+  group_by(Code) %>% 
+  mutate(delta_5_pland_forest = pland_forest - lag(pland_forest, 5),
+         delta_5_area_mn_forest = area_mn_forest - lag(area_mn_forest, 5),
+         delta_5_te_forest = te_forest - lag(te_forest, 5),
+         delta_5_enn_mn_forest = enn_mn_forest - lag(enn_mn_forest, 5),
+         delta_1_pland_forest = pland_forest - lag(pland_forest, 1),
+         delta_1_area_mn_forest = area_mn_forest - lag(area_mn_forest, 1),
+         delta_1_te_forest = te_forest - lag(te_forest, 1),
+         delta_1_enn_mn_forest = enn_mn_forest - lag(enn_mn_forest, 1)) %>% 
+  ungroup()
+```
+
+## Get superlative variables
+
+That is, get temperatures and precipitations at the hottest, coldest, wettest, driest quarters of the year. This will require the monthly data.
+
+```{r}
+# group by year
+monthly_seasons_year <- monthly %>% 
+  select(Code, Country, Month, Year, Precip, LST_Day, LST_Night) %>% 
+  filter(!is.na(LST_Day),
+         !is.na(LST_Night)) %>% 
+  group_by(Year, Month) %>% 
+  summarise(Precip = mean(Precip),
+            LST_Day = mean(LST_Day),
+            LST_Night = mean(LST_Night)) %>% 
+  pivot_longer(cols = Precip:LST_Night,
+               names_to = "var") %>% 
+  mutate(Year = as.factor(Year))
+
+# group by country
+monthly_seasons_country <- monthly %>% 
+  select(Code, Country, Month, Year, Precip, LST_Day, LST_Night) %>% 
+  filter(!is.na(LST_Day),
+         !is.na(LST_Night)) %>% 
+  group_by(Country, Month) %>% 
+  summarise(Precip = mean(Precip),
+            LST_Day = mean(LST_Day),
+            LST_Night = mean(LST_Night)) %>% 
+  pivot_longer(cols = Precip:LST_Night,
+               names_to = "var") %>% 
+  mutate(Country = as.factor(Country))
+
+
+# plots
+
+ggplot(monthly_seasons_year, 
+       aes(x = Month, y = value)) + 
+  geom_point(cex = 0.2) +
+  geom_smooth(aes(color = Year),
+              linewidth = 0.4,
+              se = F) +
+  facet_wrap(~ var, scales = "free") + 
+  scale_x_continuous(breaks = 1:12)
+
+ggplot(monthly_seasons_country, 
+       aes(x = Month, y = value, color = Country)) + 
+  geom_point(cex = 0.2) +
+  geom_smooth(aes(color = Country),
+              linewidth = 0.4,
+              se = T) +
+  facet_wrap(~ var, scales = "free") + 
+  # xlim(c(-1, 13)) + 
+  scale_x_continuous(breaks = 1:12)
+
+```
+
+Some limitations include varying wet and dry seasons due to El Niño and La Niña. Fortunately, the variation seems to be minimal, so we can likely disregard the yearly changes in seasons. However, there is a clear difference in seasons when grouping by country.
+
+Here is a proposed list of seasons by country:
+
+```{r}
+seasons_df <- data.frame(
+  Country = c("Brazil", "Colombia", "Peru"),
+  Hot = c("September to February", "August to October, January to April", "September to November"),
+  Cool = c("April to August", "May to July", "January to July"),
+  Dry = c("June to September", "December to February", "May to September"),
+  Wet = c("December to February", "March to May, September to November", "December to February")
+) 
+
+seasons_df %>% 
+  kable_material_dark()
+```
+
+The fun part: data wrangling to get the max/min per season.
+
+```{r}
+data_seasons <- monthly %>% 
+  select(Code, Country, Month, Year, Precip, LST_Day) %>% 
+  filter(!is.na(LST_Day)) %>% 
+  group_by(Country, Year, Code) %>% 
+  mutate(max_temp = max(LST_Day),
+         max_temp_season = case_when(Country == "Brazil" ~ max(LST_Day[1:2], LST_Day[9:12]),
+                                     Country == "Colombia" ~ max(LST_Day[1:4], LST_Day[8:11]),
+                                     Country == "Peru" ~ max(LST_Day[9:11])),
+         min_temp = min(LST_Day),
+         min_temp_season = case_when(Country == "Brazil" ~ min(LST_Day[4:8]),
+                                     Country == "Colombia" ~ min(LST_Day[5:7]),
+                                     Country == "Peru" ~ min(LST_Day[1:7])),
+         max_precip = max(Precip),
+         max_precip_season = case_when(Country == "Brazil" ~ max(Precip[1:2], Precip[12]),
+                                       Country == "Colombia" ~ max(Precip[3:5], Precip[9:11]),
+                                       Country == "Peru" ~ max(Precip[1:2], Precip[12])),
+         min_precip = min(Precip),
+         min_precip_season = case_when(Country == "Brazil" ~ min(Precip[6:9]),
+                                       Country == "Colombia" ~ min(Precip[1:2], Precip[12]),
+                                       Country == "Peru" ~ min(Precip[5:9]))) %>% 
+  ungroup() 
+
+data_seasons %>% summary()
+```
+
+Check to see if `max_temp == max_temp_season` and similarly for the other superlatives.
+
+```{r}
+data_seasons %>% 
+  filter(complete.cases(.)) %>%
+  group_by(Country) %>% 
+  summarise(max_temps = sum(max_temp == max_temp_season)/n(),
+            min_temps = sum(min_temp == min_temp_season)/n(),
+            max_precips = sum(max_precip == max_precip_season)/n(),
+            min_precips = sum(min_precip == min_precip_season)/n()) %>% 
+  ungroup()
+```
+
+This could be a goodness of fit test. It may be tweaked later.
+
+Now to get these set up to be added to the annual data set.
+
+```{r}
+data_seasons_aad <- data_seasons %>% 
+  group_by(Code, Year) %>% 
+  summarise(Precip = sum(Precip),
+            LST_Day = mean(LST_Day))
+```
+

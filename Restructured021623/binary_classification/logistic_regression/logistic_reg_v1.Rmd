@@ -1,0 +1,233 @@
+---
+title: "Logistic Regresion (v1)"
+author: "TJ Sipin"
+date: "2023-02-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 999)
+```
+
+## Data
+
+```{r data}
+aad <- readRDS("~/peregrine_amazon/Restructured021623/data/annual/aad_v2")
+```
+
+## EDA
+
+```{r}
+aad_missing <- aad %>% 
+  group_by(Year, Country) %>% 
+  mutate(n_code = length(unique(Code))) %>% 
+  summarise(across(.cols = everything(), .fns = ~ (is.na(.x) %>% sum())/n_code)) %>% 
+  ungroup() %>% 
+  pivot_longer(
+    cols = c(Code:Nonveg_Riverlakeocean),
+    names_to = 'var',
+    values_to = 'missing'
+  )
+
+aad_missing
+
+ggplot(aad_missing, aes(x = Year, y = missing, color = Country)) + 
+  geom_line() +
+  facet_wrap(~ var)
+```
+
+As of 2/22/23, there are missing variables through each year, and are especially volatile for the LST variables. We may benefit from redoing the entire LST processing in GEE, while for the other environmental variables, we can just go for 2020.
+
+### Municipios with 0 incidence
+
+```{r}
+incidence <- aad %>% 
+  mutate(has_CL = case_when(Cutaneous.Leishmaniasis > 0 ~ 1,
+                            Cutaneous.Leishmaniasis == 0 ~ 0))
+
+saveRDS(incidence, "~/peregrine_amazon/Restructured021623/data/annual/incidence")
+
+incidence_v2 <- incidence %>% 
+  select(Country, Year, has_CL) %>% 
+  group_by(Country, Year) %>% 
+  summarise(percent_CL = sum(has_CL)/n()) %>% 
+  ungroup()
+
+incidence_per_year_country <- ggplot(incidence_v2) +
+  geom_line(aes(Year, percent_CL, color = Country)) + 
+  ylim(c(0,1))
+
+saveRDS(incidence_per_year_country, "~/peregrine_amazon/Restructured021623/documents/supplementary/incidence_per_year_country")
+```
+
+As the above graph shows, for all reported years per country, we have a pretty even split for Colombia and Peru, but about an 80-20 split for Brazil.
+
+## Occurrence points representation
+
+Since we don't have occurrence points or absence points in the usual sense, we instead treat each municipio as a pseudo-absence or -presence point by sampling with a Beta distribution, using the mean $\psi_{it}$ as defined in the *Methods.Rmd* document. $\sigma^2$ will be constant at $0.2$.
+
+We work first with Colombia as a test run.
+
+```{r}
+set.seed(1)
+colombia <- incidence %>% 
+  filter(Country == 'Colombia') %>% 
+  group_by(Year) %>% 
+  mutate(Cutaneous.Leishmaniasis_pos = case_when(Cutaneous.Leishmaniasis == 0 ~ NaN,
+                                                 Cutaneous.Leishmaniasis > 0 ~ Cutaneous.Leishmaniasis)) %>% 
+  mutate(CL_percentile = percent_rank(Cutaneous.Leishmaniasis_pos)) %>% 
+  mutate(alphabeta = CL_percentile*(1-CL_percentile)/(0.15),
+         alpha = CL_percentile*alphabeta,
+         beta = (1-CL_percentile)*alphabeta,
+         # shape1 = CL_percentile*((CL_percentile*(1 - CL_percentile))/(1) - 1),
+         # shape2 = CL_percentile*((CL_percentile*(1 - CL_percentile))/(1) - 1)*((1/CL_percentile) - 1),
+         psi_hat = rbeta(n = 1, shape1=alpha, shape2=beta),
+         occ = round(psi_hat)) %>% 
+  ungroup()
+
+colombia %>% select(CL_percentile, alpha, beta, psi_hat, occ)
+
+colombia$occ %>% summary
+```
+
+While this would be a fun experiment to finish through, it is best to leave it such that presence points are municipios that have $CL > 0$, and absence points being municipios that have $CL = 0$.
+
+```{r}
+colombia <- incidence %>% 
+  filter(Country == 'Colombia') %>% 
+  mutate(Year = as.factor(Year),
+         occurrence_point = case_when(has_CL == 0 ~ 'absence',
+                                      has_CL == 1 ~ 'presence') %>% 
+           as.factor()) %>% 
+  select(-has_CL) %>% 
+  filter(!is.na(occurrence_point),
+         !is.na(te_forest),
+         !is.na(LST_Day))
+```
+
+
+## Logistic regression faceted by year
+
+```{r}
+log_reg <- glm(occurrence_point ~ Year + LST_Day + 
+                 NDVI + Precip + te_forest + area_mn_forest + pland_forest + enn_mn_forest,
+               data = colombia,
+               family = binomial)
+
+log_reg %>% summary()
+
+
+library(car)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$LST_Day|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$NDVI|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$Precip|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$te_forest|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$area_mn_forest|log_reg$data$Year, boxplots = F)
+```
+
+The above give the response plots of the most significant variables. We try to produce a more elegant way to show each individual contribution below.
+
+```{r}
+log_reg_res <- data.frame(
+  yhat = log_reg$fitted.values,
+  Code = log_reg$data$Code,
+  Year = log_reg$data$Year
+) %>% 
+  full_join(log_reg$data, by = c('Code', 'Year')) %>% 
+  select(Code, yhat, log_reg$model %>% names) %>% 
+  select(Code, Year, yhat, everything())
+
+log_reg_res_v2 <- log_reg_res %>% 
+  pivot_longer(
+    cols = c(LST_Day:enn_mn_forest),
+    names_to = "var",
+    values_to = "value"
+  )
+
+ggplot(log_reg_res_v2, aes(x = value, y = yhat, color = Year)) + 
+  geom_point(alpha = 0.2) + 
+  geom_smooth(aes(color = Year),
+              alpha = 0.1,
+              linewidth = 0.3) +
+  facet_wrap(~ var, scales = 'free')
+```
+
+
+### Grouped by country-year
+
+```{r}
+country_year <- incidence %>% 
+  mutate(Year = as.factor(Year),
+         occurrence_point = case_when(has_CL == 0 ~ 'absence',
+                                      has_CL == 1 ~ 'presence') %>% 
+           as.factor()) %>% 
+  select(-has_CL) %>% 
+  filter(!is.na(occurrence_point),
+         !is.na(te_forest),
+         !is.na(LST_Day))
+```
+
+
+
+```{r}
+log_reg <- glm(occurrence_point ~ Year +  Country + LST_Day +
+                 NDVI + Precip + te_forest + area_mn_forest + pland_forest + enn_mn_forest,
+               data = country_year,
+               family = binomial)
+
+log_reg %>% summary()
+
+
+library(car)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$LST_Day|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$NDVI|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$Precip|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$te_forest|log_reg$data$Year, boxplots = F)
+
+scatterplot(log_reg$fitted.values ~ log_reg$data$area_mn_forest|log_reg$data$Year, boxplots = F)
+```
+
+```{r}
+log_reg_res <- data.frame(
+  yhat = log_reg$fitted.values,
+  Code = log_reg$data$Code,
+  Year = log_reg$data$Year,
+  Country = log_reg$data$Country
+) %>% 
+  full_join(log_reg$data, by = c('Code', 'Year', 'Country')) %>% 
+  select(Code, yhat, log_reg$model %>% names) %>% 
+  select(Code, Year, Country, yhat, everything())
+
+log_reg_res_v2 <- log_reg_res %>% 
+  pivot_longer(
+    cols = c(LST_Day:enn_mn_forest),
+    names_to = "var",
+    values_to = "value"
+  )
+
+ggplot(log_reg_res_v2, aes(x = value, y = yhat, color = Year)) + 
+  geom_point(alpha = 0.2) + 
+  geom_smooth(aes(color = Year),
+              alpha = 0.1,
+              linewidth = 0.3) +
+  facet_wrap(~ var, scales = 'free')
+
+ggplot(log_reg_res_v2, aes(x = value, y = yhat, color = Country)) + 
+  geom_point(alpha = 0.2,
+             cex = 0.4) + 
+  geom_smooth(aes(color = Country),
+              alpha = 0.4,
+              linewidth = 0.7) +
+  facet_wrap(~ var, scales = 'free')
+```
+

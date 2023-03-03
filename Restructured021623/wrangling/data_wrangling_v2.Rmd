@@ -1,0 +1,175 @@
+---
+title: "data wrangling v2"
+author: "TJ Sipin"
+date: "2023-02-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(tidymodels)
+```
+
+# Data
+
+```{r data}
+data <- readRDS("~/peregrine_amazon/Restructured021623/data/annual/incidence") %>% 
+  select(-c(Chikungunya, Dengue:Zika, OptTemp_Obs:Malaria_OptTemp)) %>% 
+  select(Code, Year, Country, Name, has_CL, Cutaneous.Leishmaniasis, everything())
+```
+
+## Population wrangling
+
+```{r}
+colombia_population_raw <- read.csv("~/peregrine_amazon/data/colombia/raw/full_colombia_Population_raw.csv") 
+brazil_population_raw <- read.csv("~/peregrine_amazon/data/brazil/raw/full_brazil_Population_raw.csv")
+peru_population_raw <- read.csv("~/peregrine_amazon/data/peru/raw/full_peru_Population_raw.csv")
+
+population_cleaner <- function(raw_data){
+   data <- raw_data %>% 
+     mutate(Year = str_sub(system.index, 5, 8) %>% 
+              as.integer()) %>% 
+     rename(Population = sum,
+            Code = MuniCode) %>% 
+     select(-c(system.index, .geo)) 
+   data
+}
+
+colombia_population <- population_cleaner(colombia_population_raw)
+brazil_population <- population_cleaner(brazil_population_raw)
+peru_population <- population_cleaner(peru_population_raw)
+
+saveRDS(colombia_population, "~/peregrine_amazon/data/colombia/processed/full_colombia_Population")
+saveRDS(brazil_population, "~/peregrine_amazon/data/brazil/processed/full_brazil_Population")
+saveRDS(peru_population, "~/peregrine_amazon/data/peru/processed/full_peru_Population")
+
+```
+
+
+
+
+## Presence- and absence-municipios
+
+```{r}
+monthly <- read.csv("~/peregrine_amazon/data/monthly_df.csv")
+
+monthly_incidence <- monthly %>% 
+  filter(Code %in% data$Code) %>%
+  mutate(has_CL = case_when(Cutaneous.Leishmaniasis > 0 ~ 1,
+                            Cutaneous.Leishmaniasis == 0 ~ 0)) %>% 
+  group_by(Code, Year) %>% 
+  mutate(CL_in_country_year = case_when(sum(has_CL) > 0 ~ 1,
+                                        sum(has_CL) == 0 ~ 0)) %>% 
+  ungroup()
+
+
+monthly_incidence_v2 <- monthly_incidence %>% 
+  select(Country, Year, CL_in_country_year) %>% 
+  group_by(Country, Year) %>% 
+  summarise(percent_CL = sum(CL_in_country_year)/n()) %>% 
+  ungroup()
+
+monthly_incidence_per_year_country <- ggplot(monthly_incidence_v2) +
+  geom_line(aes(Year, percent_CL, color = Country)) + 
+  ylim(c(0,1))
+
+# Full
+
+monthly_incidence_full <- monthly %>% 
+  # remove this filter below
+  # filter(Code %in% data$Code) %>% 
+  mutate(has_CL = case_when(Cutaneous.Leishmaniasis > 0 ~ 1,
+                            Cutaneous.Leishmaniasis == 0 ~ 0)) %>% 
+  group_by(Code, Year) %>% 
+  mutate(CL_in_country_year = case_when(sum(has_CL) > 0 ~ 1,
+                                        sum(has_CL) == 0 ~ 0)) %>% 
+  ungroup()
+
+monthly_incidence_full_v2 <- monthly_incidence_full %>% 
+  select(Country, Year, CL_in_country_year) %>% 
+  group_by(Country, Year) %>% 
+  summarise(percent_CL = sum(CL_in_country_year)/n()) %>% 
+  ungroup()
+
+monthly_incidence_full_per_year_country <- ggplot(monthly_incidence_full_v2) +
+  geom_line(aes(Year, percent_CL, color = Country)) + 
+  ylim(c(0,1))
+```
+
+
+## Introduce delta variables
+
+Take delta variables of $x_{ijt}$ with respect to year $t$. Let $t_0 = 2000$: 
+
+$$
+\Delta^{t_0}_{x_{ij}} = \Delta^{2000}_{x_{ij}} = \frac{x_{ijt} - x_{ijt_0}}{t - t_0} = \frac{x_{ijt} - x_{ij2000}}{t - 2000},
+$$
+where $i$ denotes explanatory variable $i$ and $j$ denotes municipio $j$.
+
+
+```{r}
+data_v2 <- data %>% 
+  group_by(Code) %>% 
+  mutate(delta_2000_pland_forest = pland_forest - pland_forest[1],
+         delta_2000_area_mn_forest = area_mn_forest - area_mn_forest[1],
+         delta_2000_te_forest = te_forest - te_forest[1],
+         delta_2000_enn_mn_forest = enn_mn_forest - enn_mn_forest[1]) %>% 
+  ungroup()
+
+data_v2 %>% 
+  select(Year, pland_forest, delta_2000_pland_forest, 
+         area_mn_forest, delta_2000_area_mn_forest, 
+         te_forest, delta_2000_te_forest, enn_mn_forest, 
+         delta_2000_enn_mn_forest, everything())
+```
+
+
+Now get 1- and 5-year delta variables.
+
+```{r}
+data_v3 <- data_v2 %>% 
+  group_by(Code) %>% 
+  mutate(delta_5_pland_forest = pland_forest - lag(pland_forest, 5),
+         delta_5_area_mn_forest = area_mn_forest - lag(area_mn_forest, 5),
+         delta_5_te_forest = te_forest - lag(te_forest, 5),
+         delta_5_enn_mn_forest = enn_mn_forest - lag(enn_mn_forest, 5),
+         delta_1_pland_forest = pland_forest - lag(pland_forest, 1),
+         delta_1_area_mn_forest = area_mn_forest - lag(area_mn_forest, 1),
+         delta_1_te_forest = te_forest - lag(te_forest, 1),
+         delta_1_enn_mn_forest = enn_mn_forest - lag(enn_mn_forest, 1)) %>% 
+  ungroup()
+```
+
+## Get superlative variables
+
+That is, get temperatures and precipitations at the hottest, coldest, wettest, driest quarters of the year. This will require the monthly data.
+
+```{r}
+monthly_seasons <- monthly %>% 
+  select(Country, Month, Year, Precip, LST_Day, LST_Night) %>% 
+  pivot_longer(cols = Precip:LST_Night,
+               names_to = "var")
+
+# temperature
+
+monthly_seasons_temp <- monthly_seasons %>% 
+  filter(var %in% c("LST_Day", "LST_Night"))
+
+ggplot(monthly_seasons_temp, 
+       aes(x = Year, y = value, color = var)) + 
+  geom_point() +
+  geom_smooth(aes(color = Year))
+
+```
+
+Some limitations include varying wet and dry seasons due to El Niño and La Niña. Some assumptions to be made are to assume a constant wet and dry season.
+
+
+## Incidence data
+
+```{r}
+
+```
+

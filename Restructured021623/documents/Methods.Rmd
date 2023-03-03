@@ -1,0 +1,395 @@
+---
+title: "Project Restructure Proposal Outline"
+author: "TJ Sipin"
+date: "2023-02-16"
+output:
+  html_document: default
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+library(knitr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+```
+
+## Proposal outline
+
+Upon reading an existing study
+(<https://journals.plos.org/plosntds/article?id=10.1371/journal.pntd.0007629#abstract0>)
+on the ecological suitability of c. leishmaniasis, some issues were
+introduced in our study (on my part). Our study may turn into a
+replication study. Regardless, here is the new outline for readability:
+
+Discard monthly data models, aggregate new variables by year and add to
+the annual data set. There may be too much noise from autocorrelation.
+Instead, get the values for max temperature in the hottest quarter of
+the year, min temperature in the coldest quarter of the year, max
+precipitation in the wettest quarter, etc. Given $k$ presence points
+$p_{it}$ and $\kappa$ pseudo-absence points $b_{it}$, panel by year $t$
+to account for temporal autocorrelation. (Question: Is it also necessary
+to panel by country to account for political effects? e.g. regulations
+on deforestation.)
+
+Find a logistic regression for suitability of CL $\rho_{ijt}$ for each
+point in the temporal subset:
+
+$$
+\rho_{ijt} = f(\dot{y}_{ijt}), \\
+i = 1,\dots, m, \quad j = 1,\dots, n \quad t=2000, \dots, 2020,
+$$
+
+where $\dot{y}_{ijt}$ is the set of explanatory variables to be defined
+later for each year.
+
+#### Spatial sampling process
+
+For each municipio $M_{it}$ in year $t$,
+
+$$
+M_{it} = \{y_{i1t}, \dots, y_{imt}\} = \{p_{i1t},\dots,p_{ikt},b_{i1t},\dots,b_{i\kappa t}\}.
+$$
+
+Since occurrence data is reported by municipality and without a more
+specific location within the municipality, each point $p_{it}$ and
+$b_{it}$ in the municipality will need to be randomly sampled within the
+municipality zone. This is a hurdle and introduces some uncertainty in
+the model.
+
+Note that the number of points $k + \kappa$ in each municipio is
+dependent on the area of the municipio to reduce spatial
+autocorrelation. The probability that a point becomes $p$ or $b$ might
+be given by some probability distribution function of incidence
+percentile. (Incidence percentile is obtained by ranking incidence of
+the municipality within year $t$.)
+
+This deviates from the way the original study creates presence and
+pseudo-absence points, which was done through the MaxEnt software from
+my understanding. My method makes the most sense to me, which is why I
+offer that as an alternative. However, given some time to familiarize
+myself with MaxEnt, I'm confident that I can use that software instead
+since it is widely regarded as a highly confident machine-learning
+approach to creating background points. The jury is still out on how
+this part of sampling will be done; I can use my methods or the original
+methods. Any input on this (and the entirety of this outline) is
+appreciated!
+
+We can introduce some areas to not sample in order to reduce spatial
+autocorrelation. Buffer zones is some radius from a pre-existing sampled
+point that new points cannot be sampled. Exclusion zones are zones with
+some human footprint index (HFI) greater than some value that is
+unlikely to be areas to be the source of CL. This might be a step we can
+skip to reduce bias. Nonetheless, the data for HFI can be found here:
+<https://sedac.ciesin.columbia.edu/data/set/wildareas-v3-2009-human-footprint/docs>.
+Unfortunately, it is only for the year 2009, so perhaps there is some
+way to extrapolate to the other years with our pre-existing variables.
+(Edit: Andy provided a link to paper that extrapolated the HFI to other
+years <https://iopscience.iop.org/article/10.1088/1748-9326/abe00a>.)
+Examples of exclusion zones may be urban cities, though totally
+excluding them from analysis may not be helpful.
+
+Upon reading the article, it may not be too computationally expensive to
+use their CNN code, but perhaps we can use our Harmonized Nighttime
+Lights (HNTL) variable as a proxy.
+
+Each point will contain its own set of explanatory variables $X_{it}$
+measured at that point. At the moment, it is unclear how population for
+the observation (a point) might be measured, as well as how large each
+point will be. The previous study used a 1 km $\times$ 1 km point, which
+may be implemented in our study. Population might be measured not as the
+population in that point, but a population density of that point (or of
+the point and its neighboring area of some distance). This is to be
+decided.
+
+#### New results outside of the replication
+
+Once we find a $\rho$ that can be generalized across time, it will be a
+challenge, but a novel result to bring to the table in this replication
+study would be to find some way to map $\rho$ to incidence
+$\iota = l(\rho)$. This has been a challenge since the summer REU, but
+with the more sound methodology in the existing study to implement, this
+may be doable. Additionally, we will incorporate a detailed statistical
+case-study of the effects of mining on the transmission dynamics for c.
+leishmaniasis.
+
+#### Summarized main objectives
+
+1.  Compare our results with the results of the previous study, using
+    both methodologies by the original study and our own. Our predictor
+    variables may be different.
+
+2.  Find some function to relate suitability to incidence.
+
+3.  Quantify the effects of mining on the transmission dynamics for c.
+    leishmaniasis.
+
+## Intro
+
+## Main objectives
+
+1.  Compare the results of our study and the previous study by Chavy et
+    al. Our methodologies and predictor variables differ slightly than
+    the original study.
+2.  Find some function to relate suitability to incidence.
+3.  Quantify the effects of mining within the various gold mining sites
+    on the transmission dynamics for c. leishmaniasis.
+
+## Data products
+
+*Note: Find on GEE and in README by Sofie.*
+
+## Methods documentation
+
+*Note: all methods subject to change and open to feedback and
+constructive criticism.*
+
+### Wrangling the annual data
+
+The case reporting data is limited by country. Here is the missing data
+per country per year (not including 2020 data [to update]):
+
+```{r}
+# r script found at "~/peregrine_amazon/Restructured021623/data/annual/data_wrangling.R"
+
+readRDS("~/peregrine_amazon/Restructured021623/documents/supplementary/missing_cases_v1") %>% 
+  kable() %>% 
+  kable_material_dark(lightable_options = 'hover',
+                      full_width = F)
+```
+
+There are three options that come to mind:
+
+-   Perform the analysis separated by country-year.
+-   Perform the analysis after 2009, when all data for all countries are
+    available.
+-   Perform the two separate analyses above and compare.
+
+For the purpose of simplicity and comprehension, we will write our
+methods as if following the first option (by country-year).
+
+### Creating a percentile rank for CL
+
+Here is an example of what the percentile rank for CL looks like in
+2010, with all countries present.
+
+```{r}
+read_rds("~/peregrine_amazon/Restructured021623/documents/supplementary/rank_aad") %>% 
+  filter(Year == 2010) %>% 
+  arrange(desc(CL_percentile_byYear)) %>% 
+  head() %>% 
+  kable(longtable = T) %>% 
+  kable_material_dark(lightable_options = "hover",
+                      full_width = F) 
+```
+
+### Spatial sampling methods
+
+The number of points $k + \kappa$, where we have $k$ occurrence points
+and $\kappa$ pseudo-absence points may be a function of the percentile
+rank of the area of the municipality to limit spatial autocorrelation.
+An arbitrarily chosen function might be:
+
+$$
+k + \kappa = \eta(\text{Area percentile}) = \text{floor}(3(\text{Area percentile}) + 2)
+$$
+
+So, the max amount of points $k + \kappa$ will be 5 for the largest 1%
+of municipalities by country-year and 2 for the smallest 33%. We
+decrease the number of points for smaller municipios to reduce spatial
+autocorrelation.
+
+We need some function to determine the probability that a randomly
+sampled point is an occurrence point $k$ or a pseudo-absence point
+$\kappa$.
+
+#### One sampling method
+
+A simple and trivial method:
+
+$$
+\begin{align}
+P(k | \text{CL percentile}) &= \text{CL percentile} = \psi \\
+\implies P(\kappa | \text{CL percentile}) &= 1 - \text{CL percentile} = 1 - \psi
+\end{align}
+$$
+
+```{r}
+ggplot() + 
+  geom_line(aes(x = seq(0,1,1/1000),
+                y = seq(0,1,1/1000))) + 
+  xlab("CL Percentile") + 
+  ylab("P(p | CL percentile)")
+```
+
+This is good for simplicity, though taking the log-odds might be a good
+alternative. The problem with the trivial way is that we are assuming
+that if the CL percentile is 1, then all possible points to draw from in
+the municipality will have a 100% chance of being an occurrence point
+$k$.
+
+#### A second sampling method:
+
+Another alternative might be to sample each point $y_{ijt}$ in each
+municipio $M_{it}$ for year $t$ using a Bernoulli distribution:
+
+$$
+y_{ijt} \sim \text{Bernoulli}\left(\left|\psi - |\epsilon| \right|\right) , \qquad \epsilon \sim N(0,\delta)
+$$
+
+where $\epsilon$ is drawn from a normal distribution of mean 0 and
+deviation $\delta$. This creates noise and does not solely rely on the
+CL percentile to decide whether a point is an occurrence or absence
+point.
+
+**Question:** Does this reduce the amount of assumptions and bias
+compared to MaxEnt? Is this a decent attempt at creating
+pseudo-occurrence and psuedo-absence points?
+
+#### A third sampling method (my favorite one):
+
+For municipality $M_{it}$ for year $t$, obtain the vector $\mu_{it}$ of
+mean values of our set of explanatory variables. Then, obtain each point
+$y_{ijt}$ and the vector $\dot{y}_{ijt}$ of their respective local
+explanatory variable values. Take the similarity score $s_{ijt}$ of
+$\mu_{it}$ and $\dot{y}_{ijt}$ by using some similarity measure like the
+Euclidean distance or Chi-square distance.
+
+Euclidean distance:
+
+$$
+s_{ijt} = d(\mu_{it}, \dot{y}_{ijt}) = \sqrt{\sum_{\iota=1}^n \left(\mu_{it\iota} - y_{ijt\iota} \right)^2},
+$$
+
+where $\mu_{it} = (\mu_{it1}, \dots, \mu_{itn})$ and
+$\dot{y}_{ijt} = (y_{ijt1}, \dots, y_{ijtn})$.
+
+Notice that this method removes any random effects across municipalities
+and years. **Check this.**
+
+<div>
+
+##### *Ignore the following.*
+
+------------------------------------------------------------------------
+
+| $y_{ijt}$ ~~can take on a value of 0 or 1, with the former denoting a psuedo-absence point and the latter a psuedo-presence point. With the similarity measure~~ $s_{ijt}$~~, sample from a Beta distribution:~~
+| $$  \tilde{\psi}_{ijt} \sim \text{Beta}\left(\alpha, \beta \right), \\  \alpha = \psi\Psi(s_{ijt}), \quad \beta = \frac{\psi(1-\psi)}{1 + \Psi(s_{ijt})}  $$
+| 
+| *Edit: I'm not too certain where I derived the above after a day of rest. I regret to say that I did not record the source. It does, however, look like it was derived with backed intentions. For now, disregard until its source is found and refer to the following rigorously defined method.*
+
+------------------------------------------------------------------------
+
+##### *End ignore.*
+
+</div>
+
+We can use a Beta distribution since we require a probability
+distribution with a support of $(0,1)$. First, note the mean and
+variance relation to the parameters $\alpha$ and $\beta$.
+
+$$
+\tilde{\psi}_{ijt} \sim \text{Beta}\left(\alpha, \beta \right), \\
+\mathbb{E}\left[\tilde{\psi}_{ijt}\right] = \mu = \frac{\alpha}{\alpha + \beta}, 
+\quad var\left(\tilde{\psi}_{ijt}\right) = \sigma^2 = 
+\frac{\alpha\beta}{(\alpha + \beta)^2 (\alpha + \beta + 1)}
+$$ Then observe that:
+
+$$
+\begin{align}
+\frac{\alpha\beta}{(\alpha+\beta)^2} &= \frac{\alpha}{\alpha+\beta}  \left(1 - \frac{\alpha}{\alpha + \beta}\right) \\
+&= \mu (1 - \mu) \\
+\implies \sigma^2 &= \frac{\mu (1-\mu)}{\alpha + \beta + 1} \\
+\implies \alpha + \beta &= \frac{\mu(1-\mu)}{\sigma^2} - 1 
+\end{align} 
+$$
+
+Source:
+<https://stats.stackexchange.com/questions/47916/bayesian-batting-average-prior/47921#47921>
+
+So, relating this reworked mean and variance relationship $\alpha$ and
+$\beta$, suppose we choose our mean to be $\psi_{ijt}$ and our variance
+to be $\Psi(s_{ijt})$. Then with some algebra, we can calculate:
+
+$$
+\alpha + \beta = \frac{\psi_{ijt}(1 - \psi_{ijt})}{\Psi(s_{ijt})} - 1, \quad \mu = \frac{\alpha}{\alpha + \beta} \\
+\begin{align}
+\implies \alpha &= \mu (\alpha + \beta) \\
+&= \psi_{ijt}\left(\frac{\psi_{ijt}(1 - \psi_{ijt})}{\Psi(s_{ijt})} - 1 \right),\\
+\beta &= \frac{\alpha}{\mu} - \alpha \\
+&= \alpha \left(\frac{1}{\mu} - 1 \right)\\
+&= \psi_{ijt}\left(\frac{\psi_{ijt}(1 - \psi_{ijt})}{\Psi(s_{ijt})} - 1 \right) \left(\frac{1}{\psi_{ijt}} - 1 \right)
+\end{align} 
+$$
+
+With these values of $\alpha$ and $\beta$, we can sample
+$\tilde{\psi}_{ijt} \in (0,1)$.
+
+**To decide:** Using $\tilde{\psi}_{ijt}$ , we can either further sample
+from a Bernoulli distribution with probability of $\tilde{\psi}_{ijt}$
+or round $\tilde{\psi}_{ijt}$.
+
+There is now the task of finding the function $\Psi$ that transforms our
+similarity measure into the variance. Note that it is a property of the
+variance of a Beta distribution to have an upper bound of $\mu(1-\mu)$,
+so $var = \Psi(s_{ijt}) < \psi_{ijt}(1-\psi_{ijt})$.
+
+**To decide:** Several ways to define $\Psi$:
+
+-   $\Psi(x) = \frac{1}{\frac{1}{x^4}+1}$; this makes it so that the
+    upper bound is less than $0.25$. However, the upper limit is reached
+    quite quickly. A solution would be to arbitrarily scale the
+    $\frac{1}{x^4}$ term with some $a > 1$.
+
+-   $\Psi(x) = \frac{\text{Percentile}(x)}{4+\epsilon}$, where
+    $\epsilon$ is some arbitrary small positive number, which is
+    required so that $\sigma^2 = \Psi \in (0,0.25)$. An issue I can see
+    with this is that the scale is not fixed since we are using
+    percentiles, but since we have used percentiles already to measure
+    CL incidence, I don't think it's a poor choice to consider.
+
+Now we have all components needed to sample pseudo-absence and
+pseudo-presence points $y_{ijt}$ for each municipio $M_{it}$ in year
+$t$.
+
+#### A fourth method
+
+Consider each municipio $M_{it}$ for each year $t$ and assign each as an
+occurrence or absence point according to their sum of incidence per
+year. This plot shows the percentage of municipios that act as an
+occurrence point.
+
+```{r}
+readRDS("~/peregrine_amazon/Restructured021623/documents/supplementary/incidence_per_year_country")
+```
+
+Given this information, for Colombia and Peru, we can take sample each
+municipio as-is since the splits are relatively even. However, we may
+need to stratify sampling for Brazil since there are about 80%
+occurrence points.
+
+## Targeted / Expected Outputs
+
+Given climatic and anthropic variables at each point $y_{ijt}$, find a
+model to generalize probability of occurrence using suitability
+$\rho_{t} \in (0,1)$ paneled at each year $t$. A set of response curves
+at each panel and a heatmap of occurrence probability in the Amazonia
+region would be other products for each year. If possible, find a way to
+model across years for inference and prediction, with response curves
+and a heatmap.
+
+Compare our response curves and most important explanatory variables to
+the study by Chavy et al.
+
+Find a function $l$ to map suitability $\rho$ to projected human
+incidence $\iota$.
+
+## Concerns/Questions
+
+1.  Are the sampling methods theoretically valid? Perhaps sensitivity
+    analysis to see how sensitive the output is to each method?

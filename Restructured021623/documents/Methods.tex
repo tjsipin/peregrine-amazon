@@ -1,0 +1,389 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{lmodern}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\usepackage{framed}
+\definecolor{shadecolor}{RGB}{248,248,248}
+\newenvironment{Shaded}{\begin{snugshade}}{\end{snugshade}}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{0.94,0.16,0.16}{#1}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.77,0.63,0.00}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\BuiltInTok}[1]{#1}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{0.64,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\ImportTok}[1]{#1}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+% Set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\IfFileExists{bookmark.sty}{\usepackage{bookmark}}{\usepackage{hyperref}}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same} % disable monospaced font for URLs
+\hypersetup{
+  pdftitle={Project Restructure Proposal Outline},
+  pdfauthor={TJ Sipin},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Project Restructure Proposal Outline}
+\author{TJ Sipin}
+\date{2023-02-16}
+
+\begin{document}
+\maketitle
+
+\hypertarget{proposal-outline}{%
+\subsection{Proposal outline}\label{proposal-outline}}
+
+Upon reading an existing study
+(\url{https://journals.plos.org/plosntds/article?id=10.1371/journal.pntd.0007629\#abstract0})
+on the ecological suitability of c.~leishmaniasis, some issues were
+introduced in our study (on my part). Our study may turn into a
+replication study. Regardless, here is the new outline for readability:
+
+Discard monthly data models, aggregate new variables by year and add to
+the annual data set. There may be too much noise from autocorrelation.
+Instead, get the values for max temperature in the hottest quarter of
+the year, min temperature in the coldest quarter of the year, max
+precipitation in the wettest quarter, etc. Given \(n\) presence points
+\(p_{it}\) and \(m\) pseudo-absence points \(b_{it}\), panel by year
+\(t\) to account for temporal autocorrelation. (Question: Is it also
+necessary to panel by country to account for political effects?
+e.g.~regulations on deforestation.)
+
+Find a logistic regression for suitability of CL \(\rho_{it}\) for each
+point in the temporal subset:
+
+\[
+\rho_{it} = f(X_{it}), \quad i = 1,\dots, n_t, \quad t=2000, \dots, 2020,
+\]
+
+where \(X_{it}\) is the set of explanatory variables to be defined later
+for each year.
+
+\hypertarget{spatial-sampling-process}{%
+\paragraph{Spatial sampling process}\label{spatial-sampling-process}}
+
+For each municipio \(M_{jt}\) in year \(t\),
+
+\[
+M_{jt} = \{p_{1_j t}, \dots, p_{k_j t}, b_{1_j t}, \dots, b_{\kappa_j t}\}.
+\]
+
+Since occurrence data is reported by municipality and without a more
+specific location within the municipality, each point \(p_{it}\) and
+\(b_{it}\) in the municipality will need to be randomly sampled within
+the municipality zone. This is a hurdle and introduces some uncertainty
+in the model.
+
+Note that the number of points \(k + \kappa\) in each municipio is
+dependent on the area of the municipio to reduce spatial
+autocorrelation. The probability that a point becomes \(p\) or \(b\)
+might be given by some probability distribution function of incidence
+percentile. (Incidence percentile is obtained by ranking incidence of
+the municipality within year \(t\).)
+
+This deviates from the way the original study creates presence and
+pseudo-absence points, which was done through the MaxEnt software from
+my understanding. My method makes the most sense to me, which is why I
+offer that as an alternative. However, given some time to familiarize
+myself with MaxEnt, I'm confident that I can use that software instead
+since it is widely regarded as a highly confident machine-learning
+approach to creating background points. The jury is still out on how
+this part of sampling will be done; I can use my methods or the original
+methods. Any input on this (and the entirety of this outline) is
+appreciated!
+
+We can introduce some areas to not sample in order to reduce spatial
+autocorrelation. Buffer zones is some radius from a pre-existing sampled
+point that new points cannot be sampled. Exclusion zones are zones with
+some human footprint index (HFI) greater than some value that is
+unlikely to be areas to be the source of CL. This might be a step we can
+skip to reduce bias. Nonetheless, the data for HFI can be found here:
+\url{https://sedac.ciesin.columbia.edu/data/set/wildareas-v3-2009-human-footprint/docs}.
+Unfortunately, it is only for the year 2009, so perhaps there is some
+way to extrapolate to the other years with our pre-existing variables.
+(Edit: Andy provided link to paper that extrapolated the HFI to other
+years
+\url{https://iopscience.iop.org/article/10.1088/1748-9326/abe00a}.)
+Examples of exclusion zones may be urban cities, though totally
+excluding them from analysis may not be helpful.
+
+Each point will contain its own set of explanatory variables \(X_{it}\)
+measured at that point. At the moment, it is unclear how population for
+the observation (a point) might be measured, as well as how large each
+point will be. The previous study used a 1 km \(\times\) 1 km point,
+which may be implemented in our study. Population might be measured not
+as the population in that point, but a population density of that point
+(or of the point and its neighboring area of some distance). This is to
+be decided.
+
+\hypertarget{new-results-outside-of-the-replication}{%
+\paragraph{New results outside of the
+replication}\label{new-results-outside-of-the-replication}}
+
+Once we find a \(\rho\) that can be generalized across time, it will be
+a challenge, but a novel result to bring to the table in this
+replication study would be to find some way to map \(\rho\) to incidence
+\(\iota = l(\rho)\). This has been a challenge since the summer REU, but
+with the more sound methodology in the existing study to implement, this
+may be doable. Additionally, we will incorporate a detailed statistical
+case-study of the effects of mining on the transmission dynamics for
+c.~leishmaniasis.
+
+\hypertarget{summarized-main-objectives}{%
+\paragraph{Summarized main
+objectives}\label{summarized-main-objectives}}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\item
+  Compare our results with the results of the previous study, using both
+  methodologies by the original study and our own. Our predictor
+  variables may be different.
+\item
+  Find some function to relate suitability to incidence.
+\item
+  Quantify the effects of mining on the transmission dynamics for
+  c.~leishmaniasis.
+\end{enumerate}
+
+\newpage
+
+\hypertarget{methods-documentation}{%
+\subsection{Methods documentation}\label{methods-documentation}}
+
+\hypertarget{wrangling-the-annual-data}{%
+\paragraph{Wrangling the annual data}\label{wrangling-the-annual-data}}
+
+The case reporting data is limited by country. Here is the missing data
+per country per year (not including 2020 data {[}to update{]}):
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# r script found at "\textasciitilde{}/peregrine\_amazon/Restructured021623/data/annual/data\_wrangling.R"}
+
+\FunctionTok{readRDS}\NormalTok{(}\StringTok{"\textasciitilde{}/peregrine\_amazon/Restructured021623/documents/supplementary/missing\_cases\_v1"}\NormalTok{) }\SpecialCharTok{\%\textgreater{}\%} 
+  \FunctionTok{kable}\NormalTok{() }\SpecialCharTok{\%\textgreater{}\%} 
+  \FunctionTok{kable\_material\_dark}\NormalTok{(}\AttributeTok{lightable\_options =} \StringTok{\textquotesingle{}hover\textquotesingle{}}\NormalTok{,}
+                      \AttributeTok{full\_width =}\NormalTok{ F)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{table}
+\centering
+\begin{tabular}{r|r|r|r}
+\hline
+Year & Brazil & Colombia & Peru\\
+\hline
+2000 & 935 & 149 & 494\\
+\hline
+2001 & 0 & 149 & 494\\
+\hline
+2002 & 0 & 149 & 494\\
+\hline
+2003 & 0 & 149 & 494\\
+\hline
+2004 & 0 & 149 & 494\\
+\hline
+2005 & 0 & 149 & 494\\
+\hline
+2006 & 0 & 149 & 494\\
+\hline
+2007 & 0 & 0 & 494\\
+\hline
+2008 & 0 & 0 & 494\\
+\hline
+2009 & 0 & 0 & 494\\
+\hline
+2010 & 0 & 0 & 0\\
+\hline
+2011 & 0 & 0 & 0\\
+\hline
+2012 & 0 & 0 & 0\\
+\hline
+2013 & 0 & 0 & 0\\
+\hline
+2014 & 0 & 0 & 0\\
+\hline
+2015 & 0 & 0 & 0\\
+\hline
+2016 & 0 & 0 & 0\\
+\hline
+2017 & 0 & 0 & 0\\
+\hline
+2018 & 0 & 149 & 0\\
+\hline
+2019 & 935 & 149 & 0\\
+\hline
+\end{tabular}
+\end{table}
+
+There are three options that come to mind:
+
+\begin{itemize}
+\tightlist
+\item
+  Perform the analysis separated by country-year.
+\item
+  Perform the analysis after 2009, when all data for all countries are
+  available.
+\item
+  Perform the two separate analyses above and compare.
+\end{itemize}
+
+For the purpose of simplicity and comprehension, we will write our
+methods as if following the first option (by country-year).
+
+\hypertarget{creating-a-percentile-rank-for-cl}{%
+\paragraph{Creating a percentile rank for
+CL}\label{creating-a-percentile-rank-for-cl}}
+
+Here is an example of what the percentile rank for CL looks like in
+2010, with all countries present.
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{read\_rds}\NormalTok{(}\StringTok{"\textasciitilde{}/peregrine\_amazon/Restructured021623/documents/supplementary/rank\_aad"}\NormalTok{) }\SpecialCharTok{\%\textgreater{}\%} 
+  \FunctionTok{filter}\NormalTok{(Year }\SpecialCharTok{==} \DecValTok{2010}\NormalTok{) }\SpecialCharTok{\%\textgreater{}\%} 
+  \FunctionTok{arrange}\NormalTok{(}\FunctionTok{desc}\NormalTok{(CL\_percentile\_byYear)) }\SpecialCharTok{\%\textgreater{}\%} 
+  \FunctionTok{head}\NormalTok{() }\SpecialCharTok{\%\textgreater{}\%} 
+  \FunctionTok{kable}\NormalTok{(}\AttributeTok{longtable =}\NormalTok{ T) }\SpecialCharTok{\%\textgreater{}\%} 
+  \FunctionTok{kable\_material\_dark}\NormalTok{(}\AttributeTok{lightable\_options =} \StringTok{"hover"}\NormalTok{,}
+                      \AttributeTok{full\_width =}\NormalTok{ F) }
+\end{Highlighting}
+\end{Shaded}
+
+\begin{longtable}{r|r|l|r|r|r|r|r|r}
+\hline
+Code & Year & Country & Cutaneous.Leishmaniasis & Muni\_TotalArea & CL\_percentile\_byCountryYear & Area\_percentile\_byCountryYear & CL\_percentile\_byYear & Area\_percentile\_byYear\\
+\hline
+50350 & 2010 & Colombia & 34.99799 & 1111609.71 & 1.0000000 & 0.8064516 & 1.0000000 & 0.8988173\\
+\hline
+95200 & 2010 & Colombia & 29.83219 & 1124273.43 & 0.9932432 & 0.8172043 & 0.9993659 & 0.9021025\\
+\hline
+2106359 & 2010 & Brazil & 19.69891 & 88383.24 & 1.0000000 & 0.2687366 & 0.9987318 & 0.4198423\\
+\hline
+50370 & 2010 & Colombia & 16.77666 & 635899.77 & 0.9864865 & 0.6774194 & 0.9980977 & 0.8107753\\
+\hline
+170201 & 2010 & Peru & 16.00000 & 916744.95 & 1.0000000 & 0.9432049 & 0.9974635 & 0.8718791\\
+\hline
+1600055 & 2010 & Brazil & 14.56444 & 781742.70 & 0.9989293 & 0.8201285 & 0.9968294 & 0.8495401\\
+\hline
+\end{longtable}
+
+\hypertarget{spatial-sampling-functions}{%
+\paragraph{Spatial sampling
+functions}\label{spatial-sampling-functions}}
+
+The number of points \(k + \kappa\), where we have \(k\) occurrence
+points and \(\kappa\) pseudo-absence points may be a function of the
+percentile rank of the area of the municipality to limit spatial
+autocorrelation. An arbitrarily chosen function might be:
+
+\[
+k + \kappa = \eta(\text{Area percentile}) = \text{floor}(3(\text{Area percentile}) + 2)
+\] So, the max amount of points \(k + \kappa\) will be 5 for the largest
+1\% of municipalities by country-year and 2 for the smallest 33\%.
+
+We need some function to determine the probability that a randomly
+sampled point is an occurrence point \(p\) or a pseudo-absence point
+\(b\). For now, we can use an arbitrary function:
+
+\$\$
+
+\$\$
+
+\end{document}
