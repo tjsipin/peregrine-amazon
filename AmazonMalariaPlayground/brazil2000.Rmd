@@ -1,0 +1,290 @@
+---
+title: "Brazil 2000"
+date: "12/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+library(purrr)
+```
+
+## Data
+
+```{r data}
+old_adj <- read.csv('~/AmazonMalaria/Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/adjacencymatrix/Brazil_2000.csv')
+
+new_adj <- read.csv('~/AmazonMalaria/Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics_v3/PanAmaMuni_allclasses/metric_csv/adjacencymatrix/Brazil_2000.csv')
+```
+
+#### OLD
+
+The land use categories for each land use layer are as follows:
+0- Background (Not real class)
+3- Forest Formation (Forest 1)
+4- Savanna Formation (Forest 1)
+5- Mangrove (Forest 1)
+6- Flooded Forest (Forest 1)
+11- Wetland (Non Forest Natural Formation 10)
+12- Grassland (Non Forest Natural Formation 10)
+13- Other non forest natural formation (Non Forest Natural Formation 10)
+14- Farming (Farming 14)
+22-Non-vegetatated area (Non vegetated area 22)
+27- Non-observed (Non-observed 27)
+32- Salt Flat (Non Forest Natural Formation 10)
+33- River, Lake, and Ocean (Water 26)
+34-Glacier (Water 26)
+
+#### NEW
+
+The land use categories for each land use layer are as follows:
+0- Background (Not real class)
+3- Forest Formation (Forest 1)
+4- Savanna Formation (Forest 1)
+5- Mangrove (Forest 1)
+6- Flooded Forest (Forest 1)
+11- Wetland (Non Forest Natural Formation 10)
+12- Grassland (Non Forest Natural Formation 10)
+13- Other non forest natural formation (Non Forest Natural Formation 10)
+14- Farming (Farming 14)
+22- Non-vegetatated area (Non vegetated area 22)
+24- Urban Infrastructure (Non vegetated area 22)
+25- Other Non Vegetated Area (Non vegetated area 22)
+27- Non Observed (Non Observed 27)
+29- Rocky Outcrop (Non Forest Natural Formation 10)
+30- Mining (Non vegetated area 22)
+32- Salt Flat (Non Forest Natural Formation 10)
+33- River, Lake, and Ocean (Water 26)
+34- Glacier (Water 26)
+
+```{r}
+library(reshape)
+old_adj_melted <- old_adj %>% 
+  mutate(Land_Cover_Row_Name = case_when(Land_Cover_Row == 0 ~ "Background",
+                                         Land_Cover_Row == 3 ~ "Forest",
+                                         Land_Cover_Row == 4 ~ "Savanna",
+                                         Land_Cover_Row == 5 ~ "Mangrove",
+                                         Land_Cover_Row == 6 ~ "Floodedforest",
+                                         Land_Cover_Row == 11 ~ "Wetland",
+                                         Land_Cover_Row == 12 ~ "Grassland",
+                                         Land_Cover_Row == 13 ~ "Othernonforest",
+                                         Land_Cover_Row == 14 ~ "Farming",
+                                         Land_Cover_Row == 22 ~ "Nonveg",
+                                         Land_Cover_Row == 27 ~ "Nonobserv",
+                                         Land_Cover_Row == 32 ~ "Saltflat",
+                                         Land_Cover_Row == 33 ~ "Riverlakeocean",
+                                         Land_Cover_Row == 34 ~ "Glacier") %>% 
+           as.factor(),
+         Land_Cover_Column_Name = case_when(Land_Cover_Column == 0 ~ "Background",
+                                            Land_Cover_Column == 3 ~ "Forest",
+                                            Land_Cover_Column == 4 ~ "Savanna",
+                                            Land_Cover_Column == 5 ~ "Mangrove",
+                                            Land_Cover_Column == 6 ~ "Floodedforest",
+                                            Land_Cover_Column == 11 ~ "Wetland",
+                                            Land_Cover_Column == 12 ~ "Grassland",
+                                            Land_Cover_Column == 13 ~ "Othernonforest",
+                                            Land_Cover_Column == 14 ~ "Farming",
+                                            Land_Cover_Column == 22 ~ "Nonveg",
+                                            Land_Cover_Column == 27 ~ "Nonobserv",
+                                            Land_Cover_Column == 32 ~ "Saltflat",
+                                            Land_Cover_Column == 33 ~ "Riverlakeocean",
+                                            Land_Cover_Column == 34 ~ "Glacier") %>% 
+           as.factor(),
+         Metric_Name = paste0(Land_Cover_Column_Name, "_", Land_Cover_Row_Name) %>% 
+           as.factor())
+
+new_adj_melted <- new_adj %>% 
+  mutate(Land_Cover_Row_Name = case_when(Land_Cover_Row == 0 ~ "Background",
+                                         Land_Cover_Row == 3 ~ "Forest",
+                                         Land_Cover_Row == 4 ~ "Savanna",
+                                         Land_Cover_Row == 5 ~ "Mangrove",
+                                         Land_Cover_Row == 6 ~ "Floodedforest",
+                                         Land_Cover_Row == 10 ~ "Nonforest",
+                                         Land_Cover_Row == 11 ~ "Wetland",
+                                         Land_Cover_Row == 12 ~ "Grassland",
+                                         Land_Cover_Row == 13 ~ "Othernonforest",
+                                         Land_Cover_Row == 14 ~ "Farming",
+                                         Land_Cover_Row == 22 ~ "Nonveg",
+                                         Land_Cover_Row == 24 ~ "Urban",
+                                         Land_Cover_Row == 25 ~ "Othernonveg",
+                                         Land_Cover_Row == 27 ~ "Nonobserv",
+                                         Land_Cover_Row == 29 ~ "Outcrop",
+                                         Land_Cover_Row == 30 ~ "Mining",
+                                         Land_Cover_Row == 32 ~ "Saltflat",
+                                         Land_Cover_Row == 33 ~ "Riverlakeocean",
+                                         Land_Cover_Row == 34 ~ "Glacier") %>% 
+           as.factor(),
+         Land_Cover_Column_Name = case_when(Land_Cover_Column == 0 ~ "Background",
+                                            Land_Cover_Column == 3 ~ "Forest",
+                                            Land_Cover_Column == 4 ~ "Savanna",
+                                            Land_Cover_Column == 5 ~ "Mangrove",
+                                            Land_Cover_Column == 6 ~ "Floodedforest",
+                                            Land_Cover_Column == 10 ~ "Nonforest",
+                                            Land_Cover_Column == 11 ~ "Wetland",
+                                            Land_Cover_Column == 12 ~ "Grassland",
+                                            Land_Cover_Column == 13 ~ "Othernonforest",
+                                            Land_Cover_Column == 14 ~ "Farming",
+                                            Land_Cover_Column == 22 ~ "Nonveg",
+                                            Land_Cover_Column == 24 ~ "Urban",
+                                            Land_Cover_Column == 25 ~ "Othernonveg",
+                                            Land_Cover_Column == 27 ~ "Nonobserv",
+                                            Land_Cover_Column == 29 ~ "Outcrop",
+                                            Land_Cover_Column == 30 ~ "Mining",
+                                            Land_Cover_Column == 32 ~ "Saltflat",
+                                            Land_Cover_Column == 33 ~ "Riverlakeocean",
+                                            Land_Cover_Column == 34 ~ "Glacier") %>% 
+           as.factor(),
+         Metric_Name = paste0(Land_Cover_Column_Name, "_", Land_Cover_Row_Name) %>% 
+           as.factor()) 
+
+old_adj_melted_v2 <- old_adj_melted %>% 
+  melt(id = c("Muni_ID", "Country", "Year", "Metric_Name"),
+       measure.vars = "EdgeCounts") %>% 
+  pivot_wider(id_cols = c("Muni_ID", "Country", "Year"),
+              names_from = "Metric_Name",
+              values_from = "value") %>% 
+  mutate_all(~replace_na(., 0))
+
+
+new_adj_melted_v2 <- new_adj_melted %>% 
+  melt(id = c("Muni_ID", "Country", "Year", "Metric_Name"),
+       measure.vars = "EdgeCounts") %>% 
+  pivot_wider(id_cols = c("Muni_ID", "Country", "Year"),
+              names_from = "Metric_Name",
+              values_from = "value") %>% 
+  mutate_all(~replace_na(., 0))
+```
+
+```{r}
+old_adj_melted_v3 <- old_adj_melted_v2 %>% 
+  dplyr::select(intersect(colnames(old_adj_melted_v2), colnames(new_adj_melted_v2)))
+
+new_adj_melted_v3 <- new_adj_melted_v2 %>% 
+  dplyr::select(intersect(colnames(old_adj_melted_v2), colnames(new_adj_melted_v2)))
+
+old_adj_melted_v3
+new_adj_melted_v3
+```
+
+```{r}
+old_adj_melted_v4 <- old_adj_melted_v3 %>% 
+  dplyr::select(where(is.numeric), - Year, - Wetland_Othernonforest, - Background_Othernonforest, - Muni_ID)
+                # , - Floodedforest_Othernonforest, Floodedforest_Nonobserv, Floodedforest_Grassland)
+
+
+new_adj_melted_v4 <- new_adj_melted_v3 %>% 
+  dplyr::select(where(is.numeric), - Year, - Wetland_Othernonforest, - Background_Othernonforest, - Muni_ID)
+                # , - Floodedforest_Othernonforest, Floodedforest_Nonobserv, Floodedforest_Grassland)
+
+
+
+cor(old_adj_melted_v4, new_adj_melted_v4, method = 'pearson') %>% 
+  diag() %>% 
+  as.data.frame() %>% 
+  filter(!is.na(.)) %>% 
+  summary()
+
+```
+
+Unsure why the correlation is not close to one.
+
+
+
+## Class Metrics
+
+### data
+
+```{r}
+old_class <- read_csv('~/AmazonMalaria/Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/classmetrics/Brazil_2000.csv') %>% 
+  filter(class == 3) %>% 
+  dplyr::select(-c(layer, id, level, class))
+
+new_class <- read_csv('~/AmazonMalaria/Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics_v3/PanAmaMuni_allclasses/metric_csv/classmetrics/Brazil_2000.csv') %>% 
+  filter(class == 3) %>% 
+  dplyr::select(-c(layer, id, level, class))
+```
+
+```{r}
+new_class[!complete.cases(new_class),]
+old_class[!complete.cases(old_class),]
+```
+
+```{r}
+old_class_v2 <- old_class %>% 
+  pivot_wider(
+    id_cols = c('Muni_ID', 'Country', 'Year'),
+    names_from = 'metric',
+    values_from = 'value'
+  ) %>% 
+  dplyr::rename(pland_forest = pland,
+                area_mn_forest = area_mn,
+                te_forest = te,
+                enn_mn_forest = enn_mn)
+
+new_class_v2 <- new_class %>% 
+  pivot_wider(
+    id_cols = c('Muni_ID', 'Country', 'Year'),
+    names_from = 'metric',
+    values_from = 'value'
+  ) %>% 
+  dplyr::rename(pland_forest = pland,
+                area_mn_forest = area_mn,
+                te_forest = te,
+                enn_mn_forest = enn_mn)
+
+merged_class <- merge(old_class_v2, new_class_v2, 
+                      by = c('Muni_ID', 'Country', 'Year'),
+                      suffixes = c('_old', '_new'))
+```
+
+```{r}
+ggplot(merged_class) + 
+  geom_point(aes(x = pland_forest_old,
+                 y = pland_forest_new)) +
+  geom_abline(slope = 1)
+
+ggplot(merged_class) + 
+  geom_point(aes(x = area_mn_forest_old,
+                 y = area_mn_forest_new)) + 
+  geom_abline(slope = 1)
+
+ggplot(merged_class) + 
+  geom_point(aes(x = te_forest_old,
+                 y = te_forest_new)) + 
+  geom_abline(slope = 1)
+
+ggplot(merged_class) + 
+  geom_point(aes(x = enn_mn_forest_old,
+                 y = enn_mn_forest_new)) +
+  geom_abline(slope = 1)
+```
+
+#### Statistical testing
+
+We attempt to test if $\mu_{\text{old}} = \mu_{\text{new}}$ or $\mu_{d} = 0$. We know the observations are independent of each other, more or less depending on if we take spatiality into account. We now need to test if each variable is normally distributed to see if we can perform a two-sample t-test.
+
+```{r}
+merged_class %>% 
+  dplyr::select(-c(Year, Muni_ID)) %>% 
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+  facet_wrap(~ key, scales = 'free') +
+  geom_density()
+```
+
+Each variable is not normally distributed, so we turn to the nonparametric Mann-Whitney-Wilcoxon Test.
+
+```{r}
+wilcox.test(merged_class$area_mn_forest_old, merged_class$area_mn_forest_new, paired = T)
+wilcox.test(merged_class$enn_mn_forest_old, merged_class$enn_mn_forest_new, paired = T)
+wilcox.test(merged_class$pland_forest_old, merged_class$pland_forest_new, paired = T)
+wilcox.test(merged_class$te_forest_old, merged_class$te_forest_new, paired = T)
+```
+
+The only variable that is above the significance level of $\alpha = 0.05$ is `te_forest`. That is, every other variable pair — `area_mn_forest`, `enn_mn_forest`, and `pland_forest` — are statistically different. We can then conclude that with $\alpha = 0.05$, the two data sets are statistically different and must be redone.
+

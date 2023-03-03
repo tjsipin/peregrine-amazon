@@ -1,0 +1,80 @@
+---
+title: "forest"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+
+## data
+
+```{r data}
+monthly <- read.csv("~/peregrine_amazon/data/monthly_df.csv")
+
+monthly_original <- read.csv("~/AmazonMalaria/Data/1_DataProcessing/DF/monthly_df.csv")
+
+annual_original <- read.csv("~/AmazonMalaria/Data/1_DataProcessing/DF/annual_df.csv")
+
+monthly_original %>% 
+  summary()
+
+annual_original %>% 
+  summary()
+
+LandscapeMetrics_CM <- read.csv("~/AmazonMalaria/Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/classmetrics.csv")
+
+LandscapeMetrics_CM_v3 <- read.csv("~/AmazonMalaria/Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics_v3/PanAmaMuni_allclasses/metric_csv/classmetrics.csv")
+
+annual_original$Code %>% unique() %>% length()
+
+(annual_original %>% filter(!is.na(pland_forest)))$Code %>% unique() %>% length()
+
+LandscapeMetrics_CM$Muni_ID %>% unique() %>% length()
+
+LandscapeMetrics_CM_v3$Muni_ID %>% unique() %>% length()
+
+(annual_original %>% 
+  filter(Code %in% (LandscapeMetrics_CM_v3_1$Muni_ID %>% unique()))) %>% 
+  summary()
+
+LandscapeMetrics_CM_v3 %>% summary()
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+deforestation <- monthly[,c(1:30,31, 37, 41, 46)] %>% 
+  group_by(Code) %>% 
+  mutate(forest_loss = pland_forest[1] - pland_forest) %>% 
+  ungroup() %>% 
+  dplyr::rename(CL = Cutaneous.Leishmaniasis) %>% 
+  filter(!is.na(CL))
+
+deforestation %>% summary()
+```
+
+
+```{r}
+lst_df_annual<-read_csv("Data/1_DataProcessing/Environmental/Temp/MOD11A2Temp/lst_df_annual.csv")
+lst_df_monthly<-read_csv("Data/1_DataProcessing/Environmental/Temp/MOD11A2Temp/lst_df_monthly.csv")
+opttemp_df_annual<-read_csv("Data/1_DataProcessing/Environmental/Temp/MOD11A2Temp/opttemp_df_annual.csv")
+opttemp_df_monthly<-read_csv("Data/1_DataProcessing/Environmental/Temp/MOD11A2Temp/opttemp_df_monthly.csv") 
+veg_df_annual<-read_csv("Data/1_DataProcessing/Environmental/Veg/MOD13Q1Veg/veg_df_annual.csv")
+veg_df_monthly<-read_csv("Data/1_DataProcessing/Environmental/Veg/MOD13Q1Veg/veg_df_monthly.csv")
+precip_df_annual<-read_csv("Data/1_DataProcessing/Environmental/Precip/CHIRPSPrecip/precip_df_annual.csv")
+precip_df_monthly<-read_csv("Data/1_DataProcessing/Environmental/Precip/CHIRPSPrecip/precip_df_monthly.csv")
+occ_df<-read_csv("Data/1_DataProcessing/Environmental/SurfaceWater/JRCSurfaceWater/occ_df.csv")
+```
+
+```{r}
+lst_df_annual %>% filter()
+LandscapeMetrics_CM_v3_1 <- LandscapeMetrics_CM_v3 %>% 
+  mutate(Muni_ID = substr(Muni_ID, 3, 8), across(Country, ~ 'Peru'))
+
+sapply((LandscapeMetrics_CM_v3 %>% filter(Country == 'Peru'))$Muni_ID %>% as.character, nchar) %>% summary()
+```
+
