@@ -11,6 +11,17 @@ library(dplyr)
 ### Stable Lights
 ### Standing Water Occurrence
 
+############################################################################
+############################################################################
+###                                                                      ###
+###                                NOTE:                                 ###
+###                                                                      ###
+############################################################################
+############################################################################
+
+# Download files listed in the **Auxiliary files** sub-section in the [README] to stitch
+# each variable together
+
 
 cleanerFunc <- function(data, country, var){
   cleaned <- data %>%
@@ -54,38 +65,17 @@ cleanerFunc_precip <- function(data, country){
   return(cleaned_v2)
 }
 
-##### Neighborhood CSVs ####
-
-# AvgRad <- read.csv("~/peregrine_amazon/data/colombia/neighborhood_colombia_zones_AvgRad.csv") %>%
-#   cleanerFunc()
-# FLDAS <- read.csv("~/peregrine_amazon/data/colombia/neighborhood_colombia_zones_FLDAS.csv") %>%
-#   cleanerFunc()
-# HNTL <- read.csv("~/peregrine_amazon/data/colombia/neighborhood_colombia_zones_HNTL.csv") %>%
-#   cleanerFunc()
-# LST <- read.csv("~/peregrine_amazon/data/colombia/neighborhood_colombia_zones_LST.csv") %>%
-#   cleanerFunc()
-# modis <- read.csv("~/peregrine_amazon/data/colombia/neighborhood_colombia_zones_modis_veg.csv") %>%
-#   cleanerFunc()
-# PP <- read.csv("~/peregrine_amazon/data/colombia/neighborhood_colombia_zones_PP.csv") %>%
-#   cleanerFunc()
-# Precip <- read.csv("~/peregrine_amazon/data/colombia/neighborhood/neighborhood_colombia_zones_Precip.csv") %>%
-#   cleanerFunc()
-# StableLights <- read.csv("~/peregrine_amazon/data/colombia/neighborhood/neighborhood_colombia_zones_StableLights.csv") %>%
-#   cleanerFunc()
-# SWOccurrence <- read.csv("~/peregrine_amazon/data/colombia/neighborhood/neighborhood_colombia_zones_SWOccurrence.csv") %>%
-#   cleanerFunc()
-# Incidence <- read.csv("~/peregrine_amazon/data/colombia/Incidence_v4/colombia_monthly_incidence_wide.csv") %>%
-#   rename(MuniCode = Muni_Code,
-#          Total_Population = Population) %>%
-#   filter(Year != 2021)
-
 #### Full CSVs ####
+
+# Reminder: downlaod raw files in **Auxiliary files** section in the [README] and place corresponding files into
+# its corresponding directory
 
 ##################################################################
 ##                           Colombia                           ##
 ##################################################################
 
-raw_colombia_files <- list.files("~/peregrine_amazon/data/colombia/raw", full.names = F) # no population
+
+raw_colombia_files <- list.files("~/peregrine_amazon/data/colombia/raw", full.names = F)
 
 
 cleanCSVfunc_colombia <- function(file_name){
@@ -103,11 +93,29 @@ cleanCSVfunc_colombia <- function(file_name){
   write.csv(cleaned, paste0("~/peregrine_amazon/data/colombia/processed/", gsub("_raw.csv", "_processed.csv", data_str)))
 }
 
+cleanCSVfunc_colombia_toRDS <- function(file_name){ # save space
+  data <- read.csv(file = paste0("~/peregrine_amazon/data/colombia/raw/", file_name))
+  country = "Colombia"
+  data_str <- file_name
+  cleaned <- if(grepl("precip", file_name, ignore.case = T)){
+    cleanerFunc_precip(data, country)
+  } else {
+    cleanerFunc(data, country)
+  }
+  if("mean" %in% names(cleaned)){
+    colnames(cleaned)[colnames(cleaned) == "mean"] <- data_str # rename after
+  }
+  saveRDS(cleaned, paste0("~/peregrine_amazon/data/colombia/processed/", gsub("_raw.csv", "_processed", data_str)))
+}
+
+
+
 for(file in raw_colombia_files){
   print(file)
   if(grepl("Population", file, ignore.case = T)) {next}
-  cleanCSVfunc_colombia(file)
+  cleanCSVfunc_colombia_toRDS(file)
 }
+
 
 
 
@@ -134,10 +142,25 @@ cleanCSVfunc_peru <- function(file_name){
   write.csv(cleaned, paste0("~/peregrine_amazon/data/peru/processed/", gsub("_raw.csv", "_processed.csv", data_str)))
 }
 
+cleanCSVfunc_peru_toRDS <- function(file_name){ # save space
+  data <- read.csv(file = paste0("~/peregrine_amazon/data/peru/raw/", file_name))
+  country = "Peru"
+  data_str <- file_name
+  cleaned <- if(grepl("precip", file_name, ignore.case = T)){
+    cleanerFunc_precip(data, country)
+  } else {
+    cleanerFunc(data, country)
+  }
+  if("mean" %in% names(cleaned)){
+    colnames(cleaned)[colnames(cleaned) == "mean"] <- data_str # rename after
+  }
+  saveRDS(cleaned, paste0("~/peregrine_amazon/data/peru/processed/", gsub("_raw.csv", "_processed", data_str)))
+}
+
 for(file in raw_peru_files){
   print(file)
   if(grepl("Population", file, ignore.case = T)) {next}
-  cleanCSVfunc_peru(file)
+  cleanCSVfunc_peru_toRDS(file)
 }
 
 
@@ -147,7 +170,7 @@ for(file in raw_peru_files){
 ##################################################################
 
 
-raw_brazil_files <- list.files("~/peregrine_amazon/data/brazil/raw", full.names = F)[-7] # remove population
+raw_brazil_files <- list.files("~/peregrine_amazon/data/brazil/raw", full.names = F) # remove population
 
 cleanCSVfunc_brazil <- function(file_name){
   data <- read.csv(file = paste0("~/peregrine_amazon/data/brazil/raw/", file_name))
@@ -164,10 +187,27 @@ cleanCSVfunc_brazil <- function(file_name){
   write.csv(cleaned, paste0("~/peregrine_amazon/data/brazil/processed/", gsub("_raw.csv", "_processed.csv", data_str)))
 }
 
+cleanCSVfunc_brazil_toRDS <- function(file_name){ # save space
+  data <- read.csv(file = paste0("~/peregrine_amazon/data/brazil/raw/", file_name))
+  country = "Brazil"
+  data_str <- file_name
+  cleaned <- if(grepl("precip", file_name, ignore.case = T)){
+    cleanerFunc_precip(data, country)
+  } else {
+    cleanerFunc(data, country)
+  }
+  if("mean" %in% names(cleaned)){
+    colnames(cleaned)[colnames(cleaned) == "mean"] <- data_str # rename after
+  }
+  saveRDS(cleaned, paste0("~/peregrine_amazon/data/brazil/processed/", gsub("_raw.csv", "_processed", data_str)))
+}
+
+
+
 for(file in raw_brazil_files){
   print(file)
   if(grepl("Population", file, ignore.case = T)) {next}
-  cleanCSVfunc_brazil(file)
+  cleanCSVfunc_brazil_toRDS(file)
 }
 
 #################################################################
