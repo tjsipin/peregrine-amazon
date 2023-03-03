@@ -1,0 +1,637 @@
+---
+title: "LandscapeMetrics"
+author: "Sofie McComb"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This Rmd document will perform landscape metric analyses on the PanAmazonia land use raster layers by municipality for South American countries of interest within the Amazon. Performed on the R server.
+## Load packages
+
+```{r packages, warning=FALSE, message=FALSE}
+
+#Load the necessary packages
+library(tidyverse) #datatable manipulation
+library(raster) #rasters
+library(sf)#shapefiles
+library(landscapemetrics)#fragstats
+library(rgdal) #shapefiles
+library(doParallel) #parallel processing
+library(tools) #Filename manipulation
+options(scipen=999) #no scientific notation
+rasterOptions(tmpdir = "/home/sofie/Data/RasterTemp", tmptime=1) #temporary raster storage
+
+```
+
+
+##Establish Final Municipality shapefiles for analysis
+###Read in the Land Use Data for 2000
+
+PanAmazonian land use layer tif files for each year between 2000-2017 were stiched together by year and projected into EPSG 3857 (WGS 84 / Pseudo-Mercator -- Spherical Mercator) in ArcGIS before processing in R. Selecting just 2000 for now to establish final municipal shapefiles. Will use that shapefile to subset all other land use year layers.
+
+The land use categories for each land use layer are as follows:
+0- Background (Not real class)
+3- Forest Formation (Forest 1)
+4- Savanna Formation (Forest 1)
+5- Mangrove (Forest 1)
+6- Flooded Forest (Forest 1)
+11- Wetland (Non Forest Natural Formation 10)
+12- Grassland (Non Forest Natural Formation 10)
+13- Other non forest natural formation (Non Forest Natural Formation 10)
+14- Farming (Farming 14)
+22-Non-vegetatated area (Non vegetated area 22)
+27- Non-observed (Non-observed 27)
+32- Salt Flat (Non Forest Natural Formation 10)
+33- River, Lake, and Ocean (Water 26)
+34-Glacier (Water 26)
+
+[Possible reclassify later: Forest 1, Non Forest Natural Formation 10, Farming 14, Non vegetated area 22, Water 26, and Non-observed 27]
+
+
+```{r landuse, message=FALSE, warning=FALSE}
+
+#Read in land cover layers by year
+lc_2000<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2000_LULC_projected.tif")
+
+```
+
+
+### Read in the Municipality Data
+
+Municipality shapefiles for each country were projected into EPSG 3857 and cropped to the extent of the PanAmazonian layers in ArcGIS before processing in R (so that only Amazonian municipalities will be considered). Read in the municipality or equivalent data for each country for Amazonian relevant areas. Cropped so that municipalities in or intersecting the background/no data areas are currently included. Will run through analysis to figure which muni are in background areas, so they can be omitted from analysis.
+
+```{r municipios, message=FALSE, warning=FALSE}
+
+brazil_muni<-read_sf("Data/1_DataProcessing/LandscapeMetrics/Municipios/Amazonian_Municipios_Projected/Brazil_Amazonian_Municipios_Projected.shp")
+colombia_muni<-read_sf("Data/1_DataProcessing/LandscapeMetrics/Municipios/Amazonian_Municipios_Projected/Colombia_Amazonian_Municipios_Projected.shp")
+peru_muni<-read_sf("Data/1_DataProcessing/LandscapeMetrics/Municipios/Amazonian_Municipios_Projected/Peru_Amazonian_Municipios_Projected.shp")
+
+
+```
+
+
+### Crop and Mask Land Use by Municipality for 2000 to establish final Municipality shapefiles
+
+Shapefiles had some extra counties with only background land use classification. So creating new shapefile removing these from cropping these out while crop/mask land use by municipality for 2000.
+
+#### Brazil
+
+```{r final muni, message=FALSE, warning=FALSE}
+
+#Brazil: Municipios to Loop Through
+uniq_brazil_muni<-unique(as.numeric(brazil_muni$codigo_ibg))
+#Crop and mask raster to municipios
+ptm <- proc.time()#Time process
+for(i in 1:length(uniq_brazil_muni)){
+  muni<-uniq_brazil_muni[i] #get municipio
+  muni_sf<-subset(brazil_muni, brazil_muni$codigo_ibg==muni) #subset municipios dataset to municipio
+  municipio <- sf:::as_Spatial(muni_sf)#sf back to sp 
+  lc_crop<-raster::crop(lc_2000, extent(municipio))#crop land use raster to municipio
+  lcmuni<-raster::mask(lc_crop, municipio)#mask land use raster to municipio
+
+  if(length(unique(lcmuni))>1){ #If multiple values, even with background, save raster
+    writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Brazil/lcmuni_2000/", muni, ".tif"), overwrite=TRUE)
+  }else if(length(unique(lcmuni))==1){ #If one value, save if value is not 0 (background)
+      if(unique(lcmuni)>0){
+          writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Brazil/lcmuni_2000/", muni, ".tif"), overwrite=TRUE)
+      }else if(unique(lcmuni)==0){
+        print(paste0(muni, " is only background"))
+      }else
+       NULL
+  }else 
+    NULL
+
+}#End the for loop
+
+proc.time() - ptm #Stop time (about 2.5 hrs)
+
+#Read in names of rasters in folder and subset shapefile and save-for final muni shapefile
+  brazil_final_munis<-substring(list.files("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Brazil/lcmuni_2000"), 1, 7) %>% 
+    as.data.frame(stringsAsFactors=FALSE)
+  colnames(brazil_final_munis)<-c("codigo_ibg")
+  brazil_muni_final <- right_join(brazil_muni, brazil_final_munis, by="codigo_ibg")
+#Write shapefile
+  write_sf(brazil_muni_final, "Data/1_DataProcessing/LandscapeMetrics/Municipios/Final_Amazonian_Municipios_Projected/Final_Brazil_Amazonian_Municipios_Projected.shp", delete_layer = TRUE)
+
+```
+
+
+###Colombia
+
+```{r final muni Colombia, message=FALSE, warning=FALSE}
+
+#Colombia: Municipios to Loop Through
+uniq_colombia_muni<-unique(as.numeric(colombia_muni$MPIOS))
+#Crop and mask raster to municipios
+ptm <- proc.time()#Time process
+for(i in 1:length(uniq_colombia_muni)){
+  muni<-uniq_colombia_muni[i] #get municipio
+  muni_sf<-subset(colombia_muni, colombia_muni$MPIOS==muni) #subset municipios dataset to municipio
+  municipio <- sf:::as_Spatial(muni_sf)#sf back to sp 
+  lc_crop<-raster::crop(lc_2000, extent(municipio))#crop land use raster to municipio
+  lcmuni<-raster::mask(lc_crop, municipio)#mask land use raster to municipio
+
+  if(length(unique(lcmuni))>1){ #If multiple values, even with background, save raster
+    writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Colombia/lcmuni_2000/", muni, ".tif"), overwrite=TRUE)
+  }else if(length(unique(lcmuni))==1){ #If one value, save if value is not 0 (background)
+      if(unique(lcmuni)>0){
+          writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Colombia/lcmuni_2000/", muni, ".tif"), overwrite=TRUE)
+      }else if(unique(lcmuni)==0){
+        print(paste0(muni, " is only background"))
+      }else
+       NULL
+  }else 
+    NULL
+
+}#End the for loop
+
+proc.time() - ptm #Stop time #About 15-30 minutes
+
+#Read in names of rasters in folder and subset shapefile and save-for final muni shapefile
+  colombia_final_munis<-substring(list.files("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Colombia/lcmuni_2000"), 1, 5) %>% 
+    as.data.frame(stringsAsFactors=FALSE)
+  colnames(colombia_final_munis)<-c("MPIOS")
+  colombia_muni_final <- right_join(colombia_muni, colombia_final_munis, by="MPIOS")
+#Write shapefile
+write_sf(colombia_muni_final, "Data/1_DataProcessing/LandscapeMetrics/Municipios/Final_Amazonian_Municipios_Projected/Final_Colombia_Amazonian_Municipios_Projected.shp", delete_layer = TRUE)
+
+```
+
+###Peru
+
+```{r flip muni Peru, message=FALSE, warning=FALSE}
+
+#Peru: Municipios to Loop Through
+uniq_peru_muni<-unique(peru_muni$ADM3_PCODE)
+#Crop and mask raster to municipios
+ptm <- proc.time()#Time process
+for(i in 1:length(uniq_peru_muni)){
+  muni<-uniq_peru_muni[i] #get municipio
+  muni_sf<-subset(peru_muni, peru_muni$ADM3_PCODE==muni) #subset municipios dataset to municipio
+  municipio <- sf:::as_Spatial(muni_sf)#sf back to sp 
+  lc_crop<-raster::crop(lc_2000, extent(municipio))#crop land use raster to municipio
+  lcmuni<-raster::mask(lc_crop, municipio)#mask land use raster to municipio
+
+  if(length(unique(lcmuni))>1){ #If multiple values, even with background, save raster
+    writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Peru/lcmuni_2000/", muni, ".tif"), overwrite=TRUE)
+  }else if(length(unique(lcmuni))==1){ #If one value, save if value is not 0 (background)
+      if(unique(lcmuni)>0){
+          writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Peru/lcmuni_2000/", muni, ".tif"), overwrite=TRUE)
+      }else if(unique(lcmuni)==0){
+        print(paste0(muni, " is only background"))
+      }else
+       NULL
+  }else 
+    NULL
+
+}#End the for loop
+
+proc.time() - ptm #Stop time #About 15-30 minutes
+
+#Read in names of rasters in folder and subset shapefile and save-for final muni shapefile
+  peru_final_munis<-substring(list.files("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Peru/lcmuni_2000"), 1, 8) %>% 
+    as.data.frame(stringsAsFactors=FALSE)
+  colnames(peru_final_munis)<-c("ADM3_PCODE")
+  peru_muni_final <- right_join(peru_muni, peru_final_munis, by="ADM3_PCODE")
+#Write shapefile
+write_sf(peru_muni_final, "Data/1_DataProcessing/LandscapeMetrics/Municipios/Final_Amazonian_Municipios_Projected/Final_Peru_Amazonian_Municipios_Projected.shp", delete_layer = TRUE)
+
+```
+
+
+## Crop/Mask Land Use Layers by Municipios for each Year and Country
+
+For each year the PanAmazonian land use layers will be cropped and masked by the municipalities of each country. They will be saved as to not overwhelm memory capacity or temporary raster storage and to ease furture calculations from the layers.
+
+### Load Data
+
+```{r cropmask data, message=FALSE, warning=FALSE}
+
+#Country Shapefiles
+brazil_municipios<-read_sf("Data/1_DataProcessing/LandscapeMetrics/Municipios/Final_Amazonian_Municipios_Projected/Final_Brazil_Amazonian_Municipios_Projected.shp")
+colombia_municipios<-read_sf("Data/1_DataProcessing/LandscapeMetrics/Municipios/Final_Amazonian_Municipios_Projected/Final_Colombia_Amazonian_Municipios_Projected.shp")
+peru_municipios<-read_sf("Data/1_DataProcessing/LandscapeMetrics/Municipios/Final_Amazonian_Municipios_Projected/Final_Peru_Amazonian_Municipios_Projected.shp")
+
+#Land Use Rasters 
+lc_2000<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2000_LULC_projected.tif")
+# lc_2001<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2001_LULC_projected.tif")
+# lc_2002<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2002_LULC_projected.tif")
+# lc_2003<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2003_LULC_projected.tif")
+# lc_2004<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2004_LULC_projected.tif")
+# lc_2005<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2005_LULC_projected.tif")
+# lc_2006<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2006_LULC_projected.tif")
+# lc_2007<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2007_LULC_projected.tif")
+# lc_2008<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2008_LULC_projected.tif")
+# lc_2009<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2009_LULC_projected.tif")
+# lc_2010<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2010_LULC_projected.tif")
+# lc_2011<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2011_LULC_projected.tif")
+# lc_2012<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2012_LULC_projected.tif")
+# lc_2013<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2013_LULC_projected.tif")
+# lc_2014<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2014_LULC_projected.tif")
+# lc_2015<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2015_LULC_projected.tif")
+# lc_2016<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2016_LULC_projected.tif")
+# lc_2017<-raster("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia/PanAmazonia_Projected/PanAmazonia_2017_LULC_projected.tif")
+
+
+```
+
+###Create function to crop/mask land use rasters by municipios by year for each Country
+
+```{r cropmask functions, message=FALSE, warning=FALSE}
+
+#Brazil Function
+CropMaskBrazil<-function(year, ras){
+  year<-year
+  lc<-ras
+  munis<-unique(as.numeric(brazil_municipios$codigo_ibg))#Municipios to loop through
+  
+  #Temporary raster directory
+  dir.create (file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), showWarnings = FALSE)  #creates unique filepath for temp directory
+  rasterOptions(tmpdir=file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp")) #sets temp directory
+  
+  registerDoParallel(cores=15)#initiate multiple cores for processing (set to under computer/server limit)
+      result<-foreach(c=1:length(munis))%dopar%{ 
+        
+        #Subset land use raster by municipio
+        muni<-munis[c] #get municipio
+        muni_sf<-subset(brazil_municipios, brazil_municipios$codigo_ibg==muni) #subset municipios dataset to municipio
+        municipio <- sf:::as_Spatial(muni_sf)#sf back to sp 
+        lc_crop<-raster::crop(lc, extent(municipio))#crop land use raster to municipio
+        lcmuni<-raster::mask(lc_crop, municipio)#mask land use raster to municipio
+        
+        #Write Raster (none should be empty or all background from earlier analysis)
+        writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Brazil/lcmuni_", year, "/", muni, ".tif"),
+                    overwrite=TRUE)
+        
+      }#End Parallel processing
+      unlink(file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), recursive = TRUE) #removes entire temp directory 
+  }#End Brazil Function
+
+#Colombia Function
+CropMaskColombia<-function(year, ras){
+  year<-year
+  lc<-ras
+  munis<-unique(as.numeric(colombia_municipios$MPIOS))#Municipios to loop through
+  
+    #Temporary raster directory
+  dir.create (file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), showWarnings = FALSE)  #creates unique filepath for temp directory
+  rasterOptions(tmpdir=file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp")) #sets temp directory
+  
+  registerDoParallel(cores=15)#initiate multiple cores for processing (set to under computer/server limit)
+      result<-foreach(c=1:length(munis))%dopar%{ 
+        
+        #Subset land use raster by municipio
+        muni<-munis[c] #get municipio
+        muni_sf<-subset(colombia_municipios, colombia_municipios$MPIOS==muni) #subset municipios dataset to municipio
+        municipio <- sf:::as_Spatial(muni_sf)#sf back to sp 
+        lc_crop<-raster::crop(lc, extent(municipio))#crop land use raster to municipio
+        lcmuni<-raster::mask(lc_crop, municipio)#mask land use raster to municipio
+        
+        #Write Raster (none should be empty or all background from earlier analysis)
+        writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Colombia/lcmuni_", year, "/", muni, ".tif"),
+                    overwrite=TRUE)
+        
+      }#End Parallel processing
+      unlink(file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), recursive = TRUE) #removes entire temp directory
+  }#End Colombia Function
+
+#Peru Function
+CropMaskPeru<-function(year, ras){
+  year<-year
+  lc<-ras
+  munis<-unique(peru_municipios$ADM3_PCODE)#Municipios to loop through
+  
+    #Temporary raster directory
+  dir.create (file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), showWarnings = FALSE)  #creates unique filepath for temp directory
+  rasterOptions(tmpdir=file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp")) #sets temp directory
+  
+  registerDoParallel(cores=15)#initiate multiple cores for processing (set to under computer/server limit)
+      result<-foreach(c=1:length(munis))%dopar%{ 
+        
+        #Subset land use raster by municipio
+        muni<-munis[c] #get municipio
+        muni_sf<-subset(peru_municipios, peru_municipios$ADM3_PCODE==muni) #subset municipios dataset to municipio
+        municipio <- sf:::as_Spatial(muni_sf)#sf back to sp 
+        lc_crop<-raster::crop(lc, extent(municipio))#crop land use raster to municipio
+        lcmuni<-raster::mask(lc_crop, municipio)#mask land use raster to municipio
+        
+        #Write Raster (none should be empty or all background from earlier analysis)
+        writeRaster(lcmuni, paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/Peru/lcmuni_", year, "/", muni, ".tif"),
+                    overwrite=TRUE)
+        
+      }#End Parallel processing
+      unlink(file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), recursive = TRUE) #removes entire temp directory
+  }#End Peru Function
+
+```
+
+
+###Apply function to crop/mask land use rasters by municipios by year for each Country
+```{r applyfunctions, message=FALSE, warning=FALSE}
+
+#Apply country-specific functions to each land use layer by year 
+  #Rerun 2000 so same function applied to all
+#Brazil 2000-2017 (year, ras)
+CropMaskBrazil(2000, lc_2000)
+CropMaskBrazil(2001, lc_2001)
+CropMaskBrazil(2002, lc_2002)
+CropMaskBrazil(2003, lc_2003)
+CropMaskBrazil(2004, lc_2004)
+CropMaskBrazil(2005, lc_2005)
+CropMaskBrazil(2006, lc_2006)
+CropMaskBrazil(2007, lc_2007)
+CropMaskBrazil(2008, lc_2008)
+CropMaskBrazil(2009, lc_2009)
+CropMaskBrazil(2010, lc_2010)
+CropMaskBrazil(2011, lc_2011)
+CropMaskBrazil(2012, lc_2012)
+CropMaskBrazil(2013, lc_2013)
+CropMaskBrazil(2014, lc_2014)
+CropMaskBrazil(2015, lc_2015)
+CropMaskBrazil(2016, lc_2016)
+CropMaskBrazil(2017, lc_2017)
+
+#Colombia 2000-2017 (year, ras)
+CropMaskColombia(2000, lc_2000)
+CropMaskColombia(2001, lc_2001)
+CropMaskColombia(2002, lc_2002)
+CropMaskColombia(2003, lc_2003)
+CropMaskColombia(2004, lc_2004)
+CropMaskColombia(2005, lc_2005)
+CropMaskColombia(2006, lc_2006)
+CropMaskColombia(2007, lc_2007)
+CropMaskColombia(2008, lc_2008)
+CropMaskColombia(2009, lc_2009)
+CropMaskColombia(2010, lc_2010)
+CropMaskColombia(2011, lc_2011)
+CropMaskColombia(2012, lc_2012)
+CropMaskColombia(2013, lc_2013)
+CropMaskColombia(2014, lc_2014)
+CropMaskColombia(2015, lc_2015)
+CropMaskColombia(2016, lc_2016)
+CropMaskColombia(2017, lc_2017)
+
+#Peru 2000-2017 (year, ras)
+CropMaskPeru(2000, lc_2000)
+CropMaskPeru(2001, lc_2001)
+CropMaskPeru(2002, lc_2002)
+CropMaskPeru(2003, lc_2003)
+CropMaskPeru(2004, lc_2004)
+CropMaskPeru(2005, lc_2005)
+CropMaskPeru(2006, lc_2006)
+CropMaskPeru(2007, lc_2007)
+CropMaskPeru(2008, lc_2008)
+CropMaskPeru(2009, lc_2009)
+CropMaskPeru(2010, lc_2010)
+CropMaskPeru(2011, lc_2011)
+CropMaskPeru(2012, lc_2012)
+CropMaskPeru(2013, lc_2013)
+CropMaskPeru(2014, lc_2014)
+CropMaskPeru(2015, lc_2015)
+CropMaskPeru(2016, lc_2016)
+CropMaskPeru(2017, lc_2017)
+
+```
+
+
+
+## Landscape Metrics
+The PanAmazonian land use by country municipality files will now be analyzed separately for each country. Each municipality land use file for each year will be read in and analyzed using functions from the landscapemetrics package. We will examine class metrics such as percent land cover type, adjacencies, etc. A dataframe of the results from the analyses, rbinded together, will be saved for each municipality to be later stitched together. This will allow progress of the computations to be checked on. Computations will be performed separately by country and will be for each looped by municipio.
+
+### Create function to apply landscape metrics by country and year
+
+```{r landscapemetrics, message=FALSE, warning=FALSE}
+
+#Landscape Metrics function calculates landscape metrics for each municipio (all classes and reclasses),
+  #and saves classmetrics and adjacency matrix dataframes for each municipio
+  #Performs for each country and year input (loops through crop/mask rasters)
+
+#Landscape Metrics Function
+CalculateLandscapeMetrics<-function(country, year){
+  country<-country
+  year<-year
+  lc_munis<-list.files(paste0("Data/1_DataProcessing/LandscapeMetrics/PanAmazonia_Municipios/",
+                                       country, "/lcmuni_", year), full.names=TRUE)
+  #Temporary raster directory
+  dir.create (file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), showWarnings = FALSE)#unique filepath for temps
+  rasterOptions(tmpdir=file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp")) #sets temp directory
+  
+  registerDoParallel(cores=18)#initiate multiple cores for processing (set to under computer/server limit)
+  result<-foreach(c=1:length(lc_munis))%dopar%{ 
+    
+    #Subset and Read in municipio land use raster
+    muni<-tools::file_path_sans_ext(basename(lc_munis[c]))
+    lcmuni<-raster(lc_munis[c])
+
+
+    #Fragstat class and landscape metrics
+      #Directions/neighborhood=4 is rook's case
+    ta<-lsm_l_ta(lcmuni, directions=4)#total area of landscape in hectares
+    pland<-lsm_c_pland(lcmuni, directions = 4)#percentage of landscape
+    mna<-lsm_c_area_mn(lcmuni, directions = 4)#mean patch area/size in hectares
+    el<-lsm_c_te(lcmuni, count_boundary = FALSE, directions = 4)#edge length in meters
+    enn<-lsm_c_enn_mn(lcmuni, directions = 4, verbose = TRUE) #Mean of euclidean nearest-neighbor distance in meters
+      #ENN_MN is an ’Aggregation metric’& Simple way to describe patch isolation
+      #It summarises each class as the mean of each patch belonging to class i.
+      #Distance to the nearest neighbouring patch of the same class i in meters 
+
+    adj<-get_adjacencies(lcmuni, neighbourhood = 4, what="triangle")#Calculate adjacencies
+      #Full matrix, triangle so adjacencies only counted once
+      #Adjacency matrix describes configuration of landscape
+      #A cellwise count of edges between classes
+      #Count the number of times that a cell with a certain value occurs to a cell with a certain value
+    
+    #Combine class metrics into dataframe
+    classmetrics<-as.data.frame(rbind(ta, pland, mna, el, enn))
+    
+    #Adjacency matrix into dataframe
+    adjdf<-as.data.frame(adj) %>% #Adjacency matrix to dataframe
+      tibble::rownames_to_column(var="Land_Cover_Row") %>% #Rownames to column
+      gather(key="Land_Cover_Column", value="EdgeCounts", -Land_Cover_Row) %>% #Other edge types to column
+      dplyr::mutate(Land_Cover_Column=str_sub(Land_Cover_Column, start=2))%>% 
+        #Remove X from Column name, generated by as.data.frame
+      na.omit() #Remove rows with NA (NA from using triangle so not doublecounting adjacencies)
+    
+      #Save both dataframes for each municipality
+      write_csv(classmetrics, paste0("Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/",
+                                     country, "/lcmuni_", year, "/classmetrics/", muni, ".csv"))
+      write_csv(adjdf, paste0("Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/",
+                                     country, "/lcmuni_", year, "/adjacencymatrix/", muni, ".csv"))
+      #These dataframes will later be joined across all municipios, years, and then countries,
+        #and then the metrics will be cleaned-up and brought together
+      
+    
+  }#End parallel processing
+  unlink(file.path("Data/1_DataProcessing/LandscapeMetrics/RasterTmp"), recursive = TRUE) #removes entire temp directory
+
+}#End Landscape Metrics Function    
+
+```
+
+
+### Apply function to calculate landscape metrics by country and year
+
+```{r apply landscapemetrics, message=FALSE, warning=FALSE}
+
+#Apply calculate landscape metric function by country and year
+# #Brazil 2000-2017 (country, year) [Finished]
+# CalculateLandscapeMetrics("Brazil", 2000)
+# CalculateLandscapeMetrics("Brazil", 2001)
+# CalculateLandscapeMetrics("Brazil", 2002)
+# CalculateLandscapeMetrics("Brazil", 2003)
+# CalculateLandscapeMetrics("Brazil", 2004)
+# CalculateLandscapeMetrics("Brazil", 2005)
+# CalculateLandscapeMetrics("Brazil", 2006)
+# CalculateLandscapeMetrics("Brazil", 2007)
+# CalculateLandscapeMetrics("Brazil", 2008)
+# CalculateLandscapeMetrics("Brazil", 2009)
+# CalculateLandscapeMetrics("Brazil", 2010)
+# CalculateLandscapeMetrics("Brazil", 2011)
+# CalculateLandscapeMetrics("Brazil", 2012)
+# CalculateLandscapeMetrics("Brazil", 2013)
+# CalculateLandscapeMetrics("Brazil", 2014)
+# CalculateLandscapeMetrics("Brazil", 2015)
+# CalculateLandscapeMetrics("Brazil", 2016)
+# CalculateLandscapeMetrics("Brazil", 2017)
+
+# #Colombia 2000-2017 (country, year) [Finished]
+# CalculateLandscapeMetrics("Colombia", 2000)
+# CalculateLandscapeMetrics("Colombia", 2001)
+# CalculateLandscapeMetrics("Colombia", 2002)
+# CalculateLandscapeMetrics("Colombia", 2003)
+# CalculateLandscapeMetrics("Colombia", 2004)
+# CalculateLandscapeMetrics("Colombia", 2005)
+# CalculateLandscapeMetrics("Colombia", 2006)
+# CalculateLandscapeMetrics("Colombia", 2007)
+# CalculateLandscapeMetrics("Colombia", 2008)
+# CalculateLandscapeMetrics("Colombia", 2009)
+# CalculateLandscapeMetrics("Colombia", 2010)
+# CalculateLandscapeMetrics("Colombia", 2011)
+# CalculateLandscapeMetrics("Colombia", 2012)
+# CalculateLandscapeMetrics("Colombia", 2013)
+# CalculateLandscapeMetrics("Colombia", 2014)
+# CalculateLandscapeMetrics("Colombia", 2015)
+# CalculateLandscapeMetrics("Colombia", 2016)
+# CalculateLandscapeMetrics("Colombia", 2017)
+
+# #Peru 2000-2017 (country, year) [Finished]
+# CalculateLandscapeMetrics("Peru", 2000)
+# CalculateLandscapeMetrics("Peru", 2001)
+# CalculateLandscapeMetrics("Peru", 2002)
+# CalculateLandscapeMetrics("Peru", 2003)
+# CalculateLandscapeMetrics("Peru", 2004)
+# CalculateLandscapeMetrics("Peru", 2005)
+# CalculateLandscapeMetrics("Peru", 2006)
+# CalculateLandscapeMetrics("Peru", 2007)
+# CalculateLandscapeMetrics("Peru", 2008)
+# CalculateLandscapeMetrics("Peru", 2009)
+# CalculateLandscapeMetrics("Peru", 2010)
+# CalculateLandscapeMetrics("Peru", 2011)
+# CalculateLandscapeMetrics("Peru", 2012)
+# CalculateLandscapeMetrics("Peru", 2013)
+# CalculateLandscapeMetrics("Peru", 2014)
+# CalculateLandscapeMetrics("Peru", 2015)
+# CalculateLandscapeMetrics("Peru", 2016)
+# CalculateLandscapeMetrics("Peru", 2017)
+
+```
+
+
+
+###Combine municipio csvs per country-year
+
+
+```{r combine municipios, message=FALSE, warning=FALSE}
+
+#Combine municipality csvs for classmetrics and adjacencymatrix
+  #Saving as two csv under year folders with municipality ID column added
+  library(tidyverse)
+  library(stringr)
+  library(purrr)
+
+  #Loop through country
+  countries<-c("Colombia", "Peru", "Brazil")
+  for (c in countries){
+    country<-c
+    #Loop through year
+    years<-2000:2017
+    for (y in years){
+      year<-y
+      #Loop through classmetrics and adjacency matrix
+      metrics<-c("classmetrics", "adjacencymatrix")
+      for (m in metrics){
+        metric<-m
+      #List of municipio files
+      list_of_files <- list.files(path = paste0("Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/", country, "/lcmuni_", year, "/", metric),
+                                  pattern = ".csv",
+                                  full.names = TRUE)
+      #Read in files and combine, adding muni_ID column
+      df <- list_of_files %>%
+        purrr::set_names() %>% 
+        purrr::map_dfr(~ read_csv(.x, col_types = cols(), col_names = TRUE),.id = "Muni_ID")
+        
+      #Ifelse by country for shortening file name
+      if(country=="Colombia"){
+        df<-df %>% dplyr::mutate(Muni_ID=stringr::str_sub(Muni_ID,-9,-5))
+      }else if (country=="Brazil"){
+        df<-df %>% dplyr::mutate(Muni_ID=stringr::str_sub(Muni_ID,-11,-5))
+      }else if (country=="Peru"){
+        df<-df %>% dplyr::mutate(Muni_ID=stringr::str_sub(Muni_ID,-12,-5))
+      }else
+        NULL
+      
+      #Add year and country column
+      df<-df %>% dplyr::mutate(Year=year, Country=country) %>% dplyr::select(Muni_ID, Country, Year, everything())
+      
+      #Save csv
+      write_csv(df, paste0("Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/",metric, "/", country, "_", year, ".csv"))
+      
+      }#End metrics for loop
+    }#End year for loop
+  }#End country for loop
+  
+
+
+#Combine all classmetric and adjacency cvs across years and countries
+  #Clean up both csvs and save (not combine because a lot of information)
+    
+    #Class metrics
+      filelist_cm <- list.files(path = "Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/classmetrics",
+                                pattern = ".csv", full.names = TRUE)
+      cm <- Reduce(rbind, lapply(filelist_cm, read_csv))#Combine all csvs
+      #Join with classmetrics csv for column headers to gather by
+      cm_names<-read_csv("Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/classmetrics_column_names.csv")
+      classmetrics<-full_join(cm, cm_names, by=c("metric", "class")) %>% 
+        dplyr::select(-c(layer, level, class, id, metric)) %>% #Remove unnecessary columns
+        tidyr::spread(Metric_Name, value) #long to wide format
+      #Remove rows with NA for Muni_ID and then make all NA values 0 
+        #(land cover type is 0 for that Muni_ID if NA)
+      classmetrics[is.na(classmetrics)] <- 0 #All NA to 0
+      classmetrics<-classmetrics %>% filter(Muni_ID!=0) %>% #remove row with Muni=0 (was NA)
+        dplyr::select(Muni_ID, Country, Year, Muni_TotalArea, everything()) %>%  #Move ID and total area columns to beginning
+        arrange(Country, Muni_ID, Year)
+      #Write classmetrics csv
+      write_csv(classmetrics, "Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/classmetrics.csv")
+
+    #Adjacency Matrix
+      filelist_adj <- list.files(path = "Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/adjacencymatrix",
+                                pattern = ".csv", full.names = TRUE)
+      adj <- Reduce(rbind, lapply(filelist_adj, read_csv))#Combine all csvs
+      adj_names<-read_csv("Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/adjacencymatrix_column_names.csv")
+      adjacencymatrix<-full_join(adj, adj_names, by=c("Land_Cover_Row", "Land_Cover_Column"))%>% 
+        dplyr::select(-c(Land_Cover_Row, Land_Cover_Column)) %>% #Remove unnecessary columns
+        tidyr::spread(Adjacency_Name, EdgeCounts)#long to wide format
+      #Remove rows with NA for Muni_ID and then make all NA values 0 
+        #(land cover type is 0 for that Muni_ID if NA)
+      adjacencymatrix[is.na(adjacencymatrix)] <- 0 #All NA to 0
+      adjacencymatrix<-adjacencymatrix %>% filter(Muni_ID!=0) %>% #remove row with Muni=0 (was NA)
+        arrange(Country, Muni_ID, Year)
+      #Write adjacencymatrix csv
+      write_csv(adjacencymatrix, "Data/1_DataProcessing/LandscapeMetrics/LandscapeMetrics/PanAmaMuni_allclasses/metric_csv/adjacencymatrix.csv")
+
+
+```
+
