@@ -1,5 +1,6 @@
 library(dplyr)
 library(tidyr)
+library(stringr)
 # Pulls together all variables into one data set using neighborhoods of zones with population > 1 person/km^2
 ## Variables
 ### Average Radiance
@@ -389,10 +390,16 @@ aad_v2 %>% filter(Country == "Peru") %>% View("peru")
 
 aad_v3 <- aad_v2 %>%
   group_by(Country) %>%
-  arrange(Code, Year)
+  arrange(Code, Year) %>%
+  group_by(Code, Year, Country) %>%
+  fill(Name:Malaria_OptTemp, .direction = 'down') %>%
+  unique() %>%
+  filter(row_number() == 2) %>%
+  ungroup() %>%
+  mutate(Name = str_to_sentence(Name))
 
 aad_v3 %>% filter(Country == "Colombia") %>% View("colombia")
-aad_v2 %>% filter(Country == "Brazil") %>% View("brazil")
+aad_v3 %>% filter(Country == "Brazil") %>% View("brazil")
 aad_v2 %>% filter(Country == "Peru") %>% View("peru")
 
 

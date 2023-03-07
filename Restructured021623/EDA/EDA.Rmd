@@ -1,0 +1,135 @@
+## Data and Packages
+
+```{r}
+library(dplyr)
+library(spatialsample)
+library(sf)
+library(ggplot2)
+
+data <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv")
+```
+
+### Add geometries to aad
+```{r}
+colombia.sh <- read_sf("~/peregrine_amazon/data/colombia/shapefiles/Colombia_Amazonian_Municipios_Projected.shp") %>% 
+  select(MPIOS, geometry) %>% 
+  rename(Code = MPIOS) %>% 
+  mutate(Country = "Colombia")
+brazil.sh <- read_sf("~/peregrine_amazon/data/brazil/shapefiles/Final_Brazil_Amazonian_Municipios_Projected.shp") %>% 
+  select(codigo_ibg, geometry) %>% 
+  rename(Code = codigo_ibg) %>% 
+  mutate(Country = "Brazil")
+peru.sh <- read_sf("~/peregrine_amazon/data/peru/shapefiles/Final_Peru_Amazonian_Municipios_Projected.shp") %>% 
+  select(IDDIST, geometry) %>% 
+  rename(Code = IDDIST) %>% 
+  mutate(Country = "Peru")
+
+
+sh <- colombia.sh %>% 
+  rbind(brazil.sh) %>% 
+  rbind(peru.sh) 
+
+ggplot(sh) +
+  geom_sf(aes(color = Country))
+```
+
+
+```{r}
+data_v2 <- data %>% 
+  mutate(Code = as.character(Code)) %>% 
+  filter(Code %in% sh$Code)
+
+geom_key <- data_v2 %>% 
+  select(Code, Country) %>% 
+  mutate(Country.1 = Country) %>% 
+  unique()
+
+sh_v2 <- data.frame(
+  Code = data_v2$Code,
+  Year = data_v2$Year,
+  Country = data_v2$Country
+) %>% 
+  full_join(sh, by = c("Code", "Country")) 
+
+ggplot(sh_v2) +
+  geom_sf(aes(color = Country))
+```
+
+
+```{r}
+
+sh.geometry <- st_sfc(sh_v2$geometry)
+
+
+
+sf <- st_set_geometry(sh_v2, sh.geometry)
+
+ggplot(sf) +
+  geom_sf(aes(fill = Country))
+```
+
+```{r}
+df <- data_v2 %>% 
+  full_join(sf, by = c("Code", "Country", "Year"))
+
+df <- st_set_geometry(df, sh.geometry)
+
+ggplot(df) +
+  geom_sf(aes(fill = Country))
+
+# saveRDS(df, "~/peregrine_amazon/data/annual/aad_geometry.rds")
+```
+
+
+
+```{r}
+(
+  g_CL_colombia <- ggplot(
+    sf %>% 
+      filter(Country == "Colombia",
+             Year %in% c(2007:2017)) %>% 
+      mutate(has_CL = case_when(Cutaneous.Leishmaniasis == 0 ~ "no",
+                                Cutaneous.Leishmaniasis > 0 ~ "yes"))) +
+    geom_sf(aes(fill = Cutaneous.Leishmaniasis)) + 
+    facet_wrap(facets = 'Year')
+)
+
+(
+  g_CL_brazil <- ggplot(
+    sf %>% 
+      filter(
+             !is.na(Cutaneous.Leishmaniasis),
+             Year == 2011) %>% 
+      mutate(has_CL = case_when(Cutaneous.Leishmaniasis == 0 ~ "no",
+                                Cutaneous.Leishmaniasis > 0 ~ "yes"))) +
+    geom_sf(aes(fill = Country))
+)
+
+
+png("~/peregrine_amazon/Restructured021623/EDA/CL_plot_geometry.png", width = 600, height = 1200)
+# quartz(width = 8.5, height = 11)
+ggplot(df %>% 
+         filter(!is.na(Cutaneous.Leishmaniasis))) +
+  geom_sf(aes(fill = Cutaneous.Leishmaniasis)) +
+  scale_fill_gradient(low = "lightblue", high = "pink") + 
+  facet_wrap('Year', nrow = 3, ncol = 8) +
+  coord_fixed()
+# quartz.save("~/peregrine_amazon/Restructured021623/EDA/CL_plot_geometry.pdf")
+dev.off()
+```
+
+```{r, fig.height=36, fig.width = 12}
+df <- readRDS("~/peregrine_amazon/data/annual/aad_geometry.rds")
+
+ggplot(df %>% 
+         filter(!is.na(Cutaneous.Leishmaniasis))) +
+  geom_sf(aes(fill = Cutaneous.Leishmaniasis)) +
+  scale_fill_gradient(low = "darkgrey", high = "blue", trans = 'log') + 
+  facet_wrap('Year', shrink = F, ncol = 2)
+
+```
+
+```{r}
+
+```
+
