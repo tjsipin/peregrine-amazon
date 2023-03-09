@@ -1,16 +1,58 @@
 ## Data and Packages
 
 ```{r}
+knitr::opts_chunk$set(eval = F)
 library(dplyr)
 library(spatialsample)
 library(sf)
 library(ggplot2)
+library(tidyr)
 
-data <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv")
+
+# re-run after each R session restarts
+df <- readRDS("~/peregrine_amazon/data/annual/aad_geometry.rds")
+
+df_v2 <- df %>% 
+  group_by(Country, Code, Name) %>% 
+  mutate(inc_temp = LST_Day > dplyr::lag(LST_Day, n=1)) %>% 
+  mutate(inc_precip = Precip > dplyr::lag(Precip, n=1),
+         inc_CL = Cutaneous.Leishmaniasis > dplyr::lag(Cutaneous.Leishmaniasis),
+         precip_cases = case_when(inc_precip & inc_CL ~ "precip increase, CL increase",
+                                  !inc_precip & inc_CL ~ "precip decrease, CL increase",
+                                  !inc_precip & !inc_CL ~ "precip decrease, CL decrease",
+                                  inc_precip & !inc_CL ~ "precip increase, CL decrease"),
+         temp_cases   = case_when(inc_temp & inc_CL ~ "temp increase, CL increase",
+                                  !inc_temp & inc_CL ~ "temp decrease, CL increase",
+                                  !inc_temp & !inc_CL ~ "temp decrease, CL decrease",
+                                  inc_temp & !inc_CL ~ "temp increase, CL decrease")) %>% 
+  ungroup()
+
+df_v3 <- df_v2 %>% 
+  mutate(diff_CL = Cutaneous.Leishmaniasis - dplyr::lag(Cutaneous.Leishmaniasis))
+
+colombia_2009 <- df_v3 %>% 
+  group_by(Code, Country) %>% 
+  mutate(deforested.lag.1.diff = pland_forest - dplyr::lag(pland_forest, n = 1),
+         deforested.lag.2.diff = pland_forest - dplyr::lag(pland_forest, n = 2),
+         deforested.lag.3.diff = pland_forest - dplyr::lag(pland_forest, n = 3),
+         deforested.lag.4.diff = pland_forest - dplyr::lag(pland_forest, n = 4),
+         deforested.lag.0.nodiff = pland_forest,
+         deforested.lag.1.nodiff = dplyr::lag(pland_forest, n = 1),
+         deforested.lag.2.nodiff = dplyr::lag(pland_forest, n = 2),
+         deforested.lag.3.nodiff = dplyr::lag(pland_forest, n = 3),
+         deforested.lag.4.nodiff = dplyr::lag(pland_forest, n = 4)) %>% 
+  ungroup() %>% 
+  dplyr::filter(Year == 2009,
+                Country == "Colombia") %>% 
+  dplyr::select(Code, Country, Year, Name, Population, Cutaneous.Leishmaniasis,
+         LST_Day, LST_Night, NDVI:pland_forest, area_mn_forest, te_forest, enn_mn_forest,
+         geometry:deforested.lag.4.nodiff)
 ```
 
 ### Add geometries to aad
 ```{r}
+data <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv")
+
 colombia.sh <- read_sf("~/peregrine_amazon/data/colombia/shapefiles/Colombia_Amazonian_Municipios_Projected.shp") %>% 
   select(MPIOS, geometry) %>% 
   rename(Code = MPIOS) %>% 
@@ -130,6 +172,380 @@ ggplot(df %>%
 ```
 
 ```{r}
-
+df_v2 <- df %>% 
+  group_by(Country, Code, Name) %>% 
+  mutate(inc_temp = LST_Day > dplyr::lag(LST_Day, n=1)) %>% 
+  mutate(inc_precip = Precip > dplyr::lag(Precip, n=1),
+         inc_CL = Cutaneous.Leishmaniasis > dplyr::lag(Cutaneous.Leishmaniasis),
+         precip_cases = case_when(inc_precip & inc_CL ~ "precip increase, CL increase",
+                                  !inc_precip & inc_CL ~ "precip decrease, CL increase",
+                                  !inc_precip & !inc_CL ~ "precip decrease, CL decrease",
+                                  inc_precip & !inc_CL ~ "precip increase, CL decrease"),
+         temp_cases   = case_when(inc_temp & inc_CL ~ "temp increase, CL increase",
+                                  !inc_temp & inc_CL ~ "temp decrease, CL increase",
+                                  !inc_temp & !inc_CL ~ "temp decrease, CL decrease",
+                                  inc_temp & !inc_CL ~ "temp increase, CL decrease")) %>% 
+  ungroup()
 ```
+
+```{r, fig.height=36, fig.width = 12}
+# precip cases plot; lag=1
+ggplot(df_v2) +
+  geom_sf(aes(fill = (precip_cases))) +
+  facet_wrap('Year', shrink = F, ncol = 2)
+```
+
+```{r, fig.height=36, fig.width = 12}
+# precip cases plot; lag=2
+ggplot(df_v2) +
+  geom_sf(aes(fill = (precip_cases))) +
+  facet_wrap('Year', shrink = F, ncol = 2)
+```
+
+```{r, fig.height=36, fig.width = 12}
+# precip cases plot; lag=2
+ggplot(df_v2) +
+  geom_sf(aes(fill = (temp_cases))) +
+  facet_wrap('Year', shrink = F, ncol = 2)
+```
+
+```{r, fig.height = 24, fig.height = 8}
+
+ggplot(df_v2 %>% 
+         dplyr::filter(temp_cases == "temp increase, CL increase")) +
+  geom_sf(aes(fill = LST_Day)) + 
+  facet_wrap("Year", shrink = F, ncol = 2)
+```
+
+```{r, fig.height = 24, fig.width = 18}
+ggplot(df_v2,
+       aes(x = LST_Day,
+           y = log(Cutaneous.Leishmaniasis + 1))) +
+  geom_point() +
+  geom_smooth(aes(color = temp_cases)) +
+  facet_wrap("Year", ncol = 2,
+             scales = "free_y")
+```
+
+
+```{r, fig.height = 36, fig.width = 4}
+ggplot(df_v2) +
+  geom_boxplot(aes(x = LST_Day,
+                   y = log(Cutaneous.Leishmaniasis + 1),
+                   color = temp_cases)) +
+  facet_wrap("Year", ncol = 1,
+             scales = "fixed")
+```
+
+```{r}
+df_v3 <- df_v2 %>% 
+  mutate(diff_CL = Cutaneous.Leishmaniasis - dplyr::lag(Cutaneous.Leishmaniasis))
+
+ggplot(df_v3,
+       aes(x = Year,
+           y = diff_CL)) +
+  geom_smooth(aes(color = temp_cases))
+
+ggplot(df_v3,
+       aes(x = Year,
+           y = diff_CL)) +
+  geom_smooth(aes(color = precip_cases))
+```
+
+#### Paneled graphs
+
+In this section, we panel the rows by Country $j \in \{c, b, p\}$ where $j = c$ denotes Colombia, $j = b$ denotes Brazil, and $j = p$ denotes Peru.
+
+
+```{r}
+df_precip <- df_v3 %>% 
+  group_by(Code, Country) %>% 
+  mutate(precip.lag.1.diff = Precip - dplyr::lag(Precip, n = 1),
+         precip.lag.2.diff = Precip - dplyr::lag(Precip, n = 2),
+         precip.lag.3.diff = Precip - dplyr::lag(Precip, n = 3),
+         precip.lag.4.diff = Precip - dplyr::lag(Precip, n = 4),
+         precip.lag.0.nodiff = Precip,
+         precip.lag.1.nodiff = dplyr::lag(Precip, n = 1),
+         precip.lag.2.nodiff = dplyr::lag(Precip, n = 2),
+         precip.lag.3.nodiff = dplyr::lag(Precip, n = 3),
+         precip.lag.4.nodiff = dplyr::lag(Precip, n = 4)) %>% 
+  ungroup() %>% 
+  select(Code, Year, Country, Cutaneous.Leishmaniasis, contains("precip.lag")) %>% 
+  pivot_longer(cols = c(contains(".diff"), contains(".nodiff"))) %>% 
+  mutate(nodiff = grepl(".nodiff", name))
+```
+
+```{r, fig.height = 32, fig.width = 12}
+ggplot(df_precip %>% 
+         select(Code, Country, Year, Cutaneous.Leishmaniasis, name, nodiff, value) %>% 
+         dplyr::filter(nodiff),
+       aes(x = value,
+           y = Cutaneous.Leishmaniasis)) +
+  geom_smooth(aes(color = name)) +
+  facet_grid(cols = vars(Country),
+             rows = vars(Year), 
+             scales = "fixed")
+```
+
+There is a small hump around precipitation values $precip_{jt} = 2000$ in years $t = 2000,\dots, 2009$, and again from years $t = 2015, \dots, 2018$.
+
+
+```{r}
+df_temp <- df_v3 %>% 
+  group_by(Code, Country) %>% 
+  mutate(temp.lag.1.diff = LST_Day - dplyr::lag(LST_Day, n = 1),
+         temp.lag.2.diff = LST_Day - dplyr::lag(LST_Day, n = 2),
+         temp.lag.3.diff = LST_Day - dplyr::lag(LST_Day, n = 3),
+         temp.lag.4.diff = LST_Day - dplyr::lag(LST_Day, n = 4),
+         temp.lag.0.nodiff = LST_Day,
+         temp.lag.1.nodiff = dplyr::lag(LST_Day, n = 1),
+         temp.lag.2.nodiff = dplyr::lag(LST_Day, n = 2),
+         temp.lag.3.nodiff = dplyr::lag(LST_Day, n = 3),
+         temp.lag.4.nodiff = dplyr::lag(LST_Day, n = 4)) %>% 
+  ungroup() %>% 
+  select(Code, Year, Country, Cutaneous.Leishmaniasis, contains("temp.lag")) %>% 
+  pivot_longer(cols = c(contains(".diff"), contains(".nodiff"))) %>% 
+  mutate(nodiff = grepl(".nodiff", name))
+```
+
+
+```{r, fig.height = 32, fig.width = 18}
+ggplot(df_temp %>% 
+         select(Code, Year, Country, Cutaneous.Leishmaniasis, name, nodiff, value) %>% 
+         dplyr::filter(nodiff),
+       aes(x = value,
+           y = Cutaneous.Leishmaniasis)) +
+  geom_smooth(aes(color = name)) +
+  facet_grid(cols = vars(Country),
+             rows = vars(Year), 
+             scales = "fixed")
+```
+
+Note:
+
+- The high variation in 2009 Colombia
+- The characteristic higher incidence in the lower tail for Brazil at $LST_{bt} = 25$ for all $t$.
+
+
+```{r}
+population_df <- df_v3 %>% 
+  group_by(Country, Year) %>% 
+  mutate(population_percentile = percent_rank(Population),
+         CL_percentile = percent_rank(Cutaneous.Leishmaniasis)) %>% 
+  ungroup() %>% 
+  select(Code, Country, Year, population_percentile, CL_percentile, Population, Cutaneous.Leishmaniasis, precip_cases)
+```
+
+```{r, fig.height = 12, fig.width = 12}
+# percentile plot
+ggplot(population_df, 
+       aes(x = population_percentile,
+           y = CL_percentile)) +
+  geom_smooth(aes(color = Country)) +
+  # facet_grid(rows = vars(Year)) +
+  facet_wrap(~ Year) +
+  coord_fixed()
+```
+
+```{r, fig.height = 12, fig.width = 12}
+# regular plot
+ggplot(population_df, 
+       aes(x = Population,
+           y = Cutaneous.Leishmaniasis)) +
+  geom_smooth(aes(color = Country)) +
+  # facet_grid(rows = vars(Year)) +
+  facet_wrap(~ Year) 
+```
+
+The percentile rank plots give more clear information, but perhaps I can configure a way to make the raw values plots easier to read.
+
+```{r, fig.height = 12, fig.width = 12}
+ggplot(population_df, 
+       aes(x = Population,
+           y = log(Cutaneous.Leishmaniasis + 1))) +
+  geom_smooth(aes(color = Country)) +
+  # facet_grid(rows = vars(Year)) +
+  facet_wrap(~ Year) 
+
+ggplot(population_df, 
+       aes(x = Population,
+           y = log(Cutaneous.Leishmaniasis + 1))) +
+  geom_smooth(aes(color = Country)) +
+  # facet_grid(rows = vars(Year)) +
+  facet_wrap(~ Year) 
+```
+### Deforestation plots
+
+```{r}
+df_deforested <- df_v3 %>% 
+  group_by(Code, Country) %>% 
+  mutate(deforested.lag.1.diff = pland_forest - dplyr::lag(pland_forest, n = 1),
+         deforested.lag.2.diff = pland_forest - dplyr::lag(pland_forest, n = 2),
+         deforested.lag.3.diff = pland_forest - dplyr::lag(pland_forest, n = 3),
+         deforested.lag.4.diff = pland_forest - dplyr::lag(pland_forest, n = 4),
+         deforested.lag.0.nodiff = pland_forest,
+         deforested.lag.1.nodiff = dplyr::lag(pland_forest, n = 1),
+         deforested.lag.2.nodiff = dplyr::lag(pland_forest, n = 2),
+         deforested.lag.3.nodiff = dplyr::lag(pland_forest, n = 3),
+         deforested.lag.4.nodiff = dplyr::lag(pland_forest, n = 4)) %>% 
+  ungroup() %>% 
+  select(Code, Year, Country, Cutaneous.Leishmaniasis, contains("deforested.lag")) %>% 
+  pivot_longer(cols = c(contains(".diff"), contains(".nodiff"))) %>% 
+  mutate(nodiff = grepl(".nodiff", name))
+```
+
+```{r, fig.height = 32, fig.width = 18}
+ggplot(df_deforested %>% 
+         dplyr::filter(nodiff == T),
+       aes(x = value,
+           y = Cutaneous.Leishmaniasis)) +
+  geom_smooth(aes(color = name)) + 
+  facet_grid(cols = vars(Country),
+             rows = vars(Year),
+             scales = "free_x")
+```
+
+
+### Time series 
+
+```{r}
+library(forecast)
+```   
+
+## 2009
+
+There's a common theme that CL incidence in 2009, particularly in Colombia, has high variance. This can be investigated further.
+
+```{r}
+colombia_2009 <- df_v3 %>% 
+  group_by(Code, Country) %>% 
+  mutate(deforested.lag.1.diff = pland_forest - dplyr::lag(pland_forest, n = 1),
+         deforested.lag.2.diff = pland_forest - dplyr::lag(pland_forest, n = 2),
+         deforested.lag.3.diff = pland_forest - dplyr::lag(pland_forest, n = 3),
+         deforested.lag.4.diff = pland_forest - dplyr::lag(pland_forest, n = 4),
+         deforested.lag.0.nodiff = pland_forest,
+         deforested.lag.1.nodiff = dplyr::lag(pland_forest, n = 1),
+         deforested.lag.2.nodiff = dplyr::lag(pland_forest, n = 2),
+         deforested.lag.3.nodiff = dplyr::lag(pland_forest, n = 3),
+         deforested.lag.4.nodiff = dplyr::lag(pland_forest, n = 4)) %>% 
+  ungroup() %>% 
+  dplyr::filter(Year == 2009,
+                Country == "Colombia") %>% 
+  dplyr::select(Code, Country, Year, Name, Population, Cutaneous.Leishmaniasis,
+         LST_Day, LST_Night, NDVI:pland_forest, area_mn_forest, te_forest, enn_mn_forest,
+         geometry:deforested.lag.4.nodiff)
+
+summary(colombia_2009)
+```
+
+This year was particularly hotter and drier than 2008.
+
+```{r}
+library(rgdal)
+library(raster)
+library(ggplot2)
+library(rgeos)
+library(mapview)
+library(leaflet)
+library(broom) # if you plot with ggplot and need to turn sp data into dataframes
+
+# for loading our data
+library(sf)
+# for plotting
+library(lattice)
+library(leafpop)
+library(mapview)
+# library(vapoRwave)
+library(viridis)
+```
+
+```{r}
+mapview(colombia_2009,
+        zcol = "diff_CL")
+```
+
+#### pop-up graph
+
+```{r}
+# source: https://bookdown.org/nicohahn/making_maps_with_r5/docs/mapview.html#using-mapview-to-create-maps
+p_temp <- xyplot(diff_CL ~ LST_Day, data = colombia_2009, col = "grey", pch = 20, cex = 2)
+p_temp <- mget(rep("p_temp", nrow(colombia_2009)))
+
+clr <- rep("grey", nrow(colombia_2009))
+alp <- rep(0.2, nrow(colombia_2009))
+p_temp <- lapply(1:length(p_temp), function(i) {
+  clr[i] <- "red"
+  alp[i] <- 1
+  update(p_temp[[i]], col = clr, alpha = alp)
+})
+
+mapview(colombia_2009,
+        zcol = "diff_CL", 
+        popup = popupGraph(p_temp))
+```
+
+```{r}
+colombia_2009_flag <- colombia_2009 %>% 
+  mutate(flag = diff_CL > 9)
+
+# colombia_2009_flag_longer <- colombia_2009_flag %>% 
+#   pivot_longer(c(deforested.lag.1.diff:deforested.lag.4.nodiff))
+
+p_forest.lag.1.diff <- xyplot(diff_CL ~ deforested.lag.1.diff, data = colombia_2009_flag, col = "grey", pch = 20, cex = 2)
+p_forest.lag.1.diff <- mget(rep("p_forest.lag.1.diff", nrow(colombia_2009_flag)))
+
+clr <- rep("grey", nrow(colombia_2009_flag))
+alp <- rep(0.2, nrow(colombia_2009_flag))
+p_forest.lag.1.diff <- lapply(1:length(p_forest.lag.1.diff), function(i) {
+  clr[i] <- "red"
+  alp[i] <- 1
+  update(p_forest.lag.1.diff[[i]], col = clr, alpha = alp)
+})
+
+colombia_2009_flag.lag.1.diff <- mapview(colombia_2009_flag, zcol = 'diff_CL', popup = popupGraph(p_forest.lag.1.diff))
+# saveRDS(colombia_2009_flag.lag.1.diff, "~/peregrine_amazon/Restructured021623/EDA/plots/colombia_2009_flag.lag.1.diff")
+```
+
+```{r}
+p_forest.lag.2.diff <- xyplot(diff_CL ~ deforested.lag.2.diff, data = colombia_2009_flag, col = "grey", pch = 20, cex = 2)
+p_forest.lag.2.diff <- mget(rep("p_forest.lag.2.diff", nrow(colombia_2009_flag)))
+
+clr <- rep("grey", nrow(colombia_2009_flag))
+alp <- rep(0.2, nrow(colombia_2009_flag))
+p_forest.lag.2.diff <- lapply(1:length(p_forest.lag.2.diff), function(i) {
+  clr[i] <- "red"
+  alp[i] <- 1
+  update(p_forest.lag.2.diff[[i]], col = clr, alpha = alp)
+})
+
+colombia_2009_flag.lag.2.diff <- mapview(colombia_2009_flag, zcol = 'diff_CL', popup = popupGraph(p_forest.lag.2.diff))
+# saveRDS(colombia_2009_flag.lag.2.diff, "~/peregrine_amazon/Restructured021623/EDA/plots/colombia_2009_flag.lag.2.diff")
+```
+
+
+High variance likely caused by the one outlier La Macarena (50350). It seems that the surrounding neighborhood of La Macarena also had an increase in CL incidence. Let's try to figure out what's causing that. We can flag the municipios that have a CL incidence increase of more than 9.
+
+```{r}
+p_forest.lag.0.nodiff <- xyplot(diff_CL ~ deforested.lag.0.nodiff, data = colombia_2009_flag, col = "grey", pch = 20, cex = 2)
+p_forest.lag.0.nodiff <- mget(rep("p_forest.lag.0.nodiff", nrow(colombia_2009_flag)))
+
+clr <- rep("grey", nrow(colombia_2009_flag))
+alp <- rep(0.2, nrow(colombia_2009_flag))
+p_forest.lag.0.nodiff <- lapply(1:length(p_forest.lag.0.nodiff), function(i) {
+  clr[i] <- "red"
+  alp[i] <- 1
+  update(p_forest.lag.0.nodiff[[i]], col = clr, alpha = alp)
+})
+
+colombia_2009_flag.lag.0.nodiff <- mapview(colombia_2009_flag, zcol = 'diff_CL', popup = popupGraph(p_forest.lag.0.nodiff))
+# saveRDS(colombia_2009_flag.lag.0.nodiff, "~/peregrine_amazon/Restructured021623/EDA/plots/colombia_2009_flag.lag.0.nodiff")
+```
+
+
+```{r, eval=T}
+readRDS("~/peregrine_amazon/Restructured021623/EDA/plots/colombia_2009_flag.lag.0.nodiff")
+readRDS("~/peregrine_amazon/Restructured021623/EDA/plots/colombia_2009_flag.lag.1.diff")
+readRDS("~/peregrine_amazon/Restructured021623/EDA/plots/colombia_2009_flag.lag.2.diff")
+```
+
 

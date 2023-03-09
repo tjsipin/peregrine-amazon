@@ -26,22 +26,22 @@ library(stringr)
 
 
 
-cleanerFunc <- function(data, country, var){
+cleanerFunc <- function(data, country){
   cleaned <- data %>%
-    select(-c(system.index, .geo)) %>%
+    dplyr::select(-c(system.index, .geo)) %>%
     mutate(Year = substring(date, 1, 4) %>% as.integer(),
            Month = substring(date, 6, 7) %>% as.integer(),
            Day = substring(date, 9, 10) %>% as.integer(),
            Country = country)
   if(length(unique(cleaned$Month)) == 1){
     cleaned_v2 <- cleaned %>%
-      select(-date, -Month, -Day) %>%
+      dplyr::select(-date, -Month, -Day) %>%
       group_by(Year, MuniCode, Country) %>%
       summarise_all(mean) %>%
       ungroup()
   } else {
     cleaned_v2 <- cleaned %>%
-      select(-date, -Day) %>%
+      dplyr::select(-date, -Day) %>%
       group_by(Year, MuniCode, Month, Country) %>%
       summarise_all(mean) %>%
       ungroup()
@@ -78,8 +78,9 @@ cleanerFunc_precip <- function(data, country){
 ##################################################################
 
 
-raw_colombia_files <- list.files("~/peregrine_amazon/data/colombia/raw", full.names = F)
-cleanCSVfunc_colombia_toRDS(raw_colombia_files[1])
+raw_colombia_files <- list.files("~/peregrine_amazon/data/colombia/raw/drive-download-20230307T032623Z-001/", full.names = F)
+cleanCSVfunc_colombia_toRDS(raw_colombia_files[4])
+cleanCSVfunc_colombia_toRDS(raw_colombia_files[5])
 clean_colombia_veg <- readRDS("~/peregrine_amazon/data/colombia/processed/full_colombia_modis_veg_processed")
 clean_colombia_hntl <- readRDS("~/peregrine_amazon/data/colombia/processed/full_colombia_HNTL_processed")
 ##
@@ -101,7 +102,7 @@ if("Month" %in% names(cleaned)){
   saveRDS(cleaned, paste0("~/peregrine_amazon/data/colombia/processed/", gsub("_raw.csv", "_processed_monthly", data_str)))
   annual <- cleaned %>%
     group_by(Year, MuniCode, Country) %>%
-    select(-Month) %>%
+    dplyr::select(-Month) %>%
     summarise_all(mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
     ungroup()
   saveRDS(annual, paste0("~/peregrine_amazon/data/colombia/processed/", gsub("_raw.csv", "_processed_annual", data_str)))
@@ -116,8 +117,8 @@ if("Month" %in% names(cleaned)){
 
 ##
 
-cleanCSVfunc_colombia_toRDS <- function(file_name){ # save space
-  data <- read.csv(file = paste0("~/peregrine_amazon/data/colombia/raw/", file_name))
+cleanCSVfunc_colombia_toRDS <- function(file_name){ # smaller file size than CSVs
+  data <- read.csv(file = paste0("~/peregrine_amazon/data/colombia/raw/drive-download-20230307T032623Z-001/", file_name))
   country = "Colombia"
   data_str <- file_name
   cleaned <- if(grepl("precip", file_name, ignore.case = T)){
@@ -131,25 +132,27 @@ cleanCSVfunc_colombia_toRDS <- function(file_name){ # save space
   }
 
   if("Month" %in% names(cleaned)){
-    saveRDS(cleaned, paste0("~/peregrine_amazon/data/colombia/processed/", gsub("_raw.csv", "_processed_monthly", data_str)))
+    saveRDS(cleaned, paste0("~/peregrine_amazon/data/colombia/processed/v2/", gsub("_raw.csv", "_processed_monthly", data_str)))
     annual <- cleaned %>%
       group_by(Year, MuniCode, Country) %>%
-      select(-Month) %>%
+      dplyr::select(-Month) %>%
       summarise_all(mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
       ungroup()
-    saveRDS(annual, paste0("~/peregrine_amazon/data/colombia/processed/", gsub("_raw.csv", "_processed_annual", data_str)))
+    saveRDS(annual, paste0("~/peregrine_amazon/data/colombia/processed/v2/", gsub("_raw.csv", "_processed_annual", data_str)))
   } else {
-    saveRDS(cleaned, paste0("~/peregrine_amazon/data/colombia/processed/", gsub("_raw.csv", "_processed_annual", data_str)))
+    saveRDS(cleaned, paste0("~/peregrine_amazon/data/colombia/processed/v2/", gsub("_raw.csv", "_processed_annual", data_str)))
   }
 }
 
 
 
-for(file in raw_colombia_files){
+for(file in raw_colombia_files[6:7]){
   print(file)
   if(grepl("Population", file, ignore.case = T)) {next}
+  # if(grepl("precip", file, ignore.case = T)) {next}
   cleanCSVfunc_colombia_toRDS(file)
 }
+
 
 
 
@@ -179,7 +182,7 @@ cleanCSVfunc_peru_toRDS <- function(file_name){ # save space
     saveRDS(cleaned, paste0("~/peregrine_amazon/data/peru/processed/", gsub("_raw.csv", "_processed_monthly", data_str)))
     annual <- cleaned %>%
       group_by(Year, MuniCode, Country) %>%
-      select(-Month) %>%
+      dplyr::select(-Month) %>%
       summarise_all(mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
       ungroup()
     saveRDS(annual, paste0("~/peregrine_amazon/data/peru/processed/", gsub("_raw.csv", "_processed_annual", data_str)))
@@ -224,7 +227,7 @@ cleanCSVfunc_brazil_toRDS <- function(file_name){ # save space
     saveRDS(cleaned, paste0("~/peregrine_amazon/data/brazil/processed/", gsub("_raw.csv", "_processed_monthly", data_str)))
     annual <- cleaned %>%
       group_by(Year, MuniCode, Country) %>%
-      select(-Month) %>%
+      dplyr::select(-Month) %>%
       summarise_all(mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
       ungroup()
     saveRDS(annual, paste0("~/peregrine_amazon/data/brazil/processed/", gsub("_raw.csv", "_processed_annual", data_str)))
@@ -253,10 +256,10 @@ for(file in raw_brazil_files){
 colombia_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Colombia') %>%
   filter(!is.na(pland_forest)) %>%
-  select(Code) %>%
+  dplyr::select(Code) %>%
   unique()
 
-processed_colombia_files <- list.files("~/peregrine_amazon/data/colombia/processed/", full.names = T, pattern = "_annual")
+processed_colombia_files <- list.files("~/peregrine_amazon/data/colombia/processed/v2/", full.names = T, pattern = "_annual")
 
 sapply(sapply(processed_colombia_files, readRDS), names)
 
@@ -269,17 +272,17 @@ for(file in processed_colombia_files){
 
 full_colombia_env_vars_v2 <- full_colombia_env_vars %>%
   filter(Year > 2000) %>%
-  select(-Day) %>%
+  # dplyr::select(-Day) %>%
   rename(Code = MuniCode,
          HNTL = full_colombia_HNTL_raw.csv,
          LST_Day = LST_Day_1km,
          LST_Night = LST_Night_1km,
-         Precip = full_colombia_Precip_raw.csv,
-         StableLights = full_colombia_StableLights_raw.csv,
-         AvgRad = full_colombia_AvgRad_raw.csv) %>%
+         Precip = `full_colombia_precip_00-21_raw.csv`,
+         StableLights = full_colombia_StableLights_raw.csv) %>%
+         # AvgRad = full_colombia_AvgRad_raw.csv) %>%
   filter(Code %in% colombia_munis_filter$Code) %>%
-  select(Code, Year, Country, NDVI, EVI, LST_Day, LST_Night,
-         HNTL, StableLights, AvgRad, Precip,
+  dplyr::select(Code, Year, Country, NDVI, EVI, LST_Day, LST_Night,
+         HNTL, StableLights, Precip,
          Evap_tavg, Qair_f_tavg, SoilMoi00_10cm_tavg, Wind_f_tavg,
          Tair_f_tavg, everything())
 
@@ -291,7 +294,7 @@ full_colombia_env_vars_v2 %>% summary()
 peru_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Peru') %>%
   filter(!is.na(pland_forest)) %>%
-  select(Code) %>%
+  dplyr::select(Code) %>%
   unique()
 
 processed_peru_files <- list.files("~/peregrine_amazon/data/peru/processed/", full.names = T, pattern = "_annual")
@@ -307,7 +310,7 @@ for(file in processed_peru_files){
 
 full_peru_env_vars_v2 <- full_peru_env_vars %>%
   filter(Year > 2000) %>%
-  select(-Day) %>%
+  dplyr::select(-Day) %>%
   rename(Code = MuniCode,
          HNTL = full_peru_HNTL_raw.csv,
          LST_Day = LST_Day_1km,
@@ -316,7 +319,7 @@ full_peru_env_vars_v2 <- full_peru_env_vars %>%
          AvgRad = full_peru_AvgRad_raw.csv) %>%
   filter(Code %in% peru_munis_filter$Code) %>%
   mutate(StableLights = NA) %>%
-  select(Code, Year, Country, NDVI, EVI, LST_Day, LST_Night,
+  dplyr::select(Code, Year, Country, NDVI, EVI, LST_Day, LST_Night,
          HNTL, StableLights, AvgRad, Precip,
          Evap_tavg, Qair_f_tavg, SoilMoi00_10cm_tavg, Wind_f_tavg,
          Tair_f_tavg, everything())
@@ -330,7 +333,7 @@ full_peru_env_vars_v2 <- full_peru_env_vars %>%
 brazil_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Brazil') %>%
   filter(!is.na(pland_forest)) %>%
-  select(Code) %>%
+  dplyr::select(Code) %>%
   unique()
 
 processed_brazil_files <- list.files("~/peregrine_amazon/data/brazil/processed/", full.names = T, pattern = "_annual")
@@ -347,7 +350,7 @@ for(file in processed_brazil_files){
 
 full_brazil_env_vars_v2 <- full_brazil_env_vars %>%
   filter(Year > 2000) %>%
-  select(-Day) %>%
+  dplyr::select(-Day) %>%
   rename(Code = MuniCode,
          HNTL = full_brazil_HNTL_raw.csv,
          LST_Day = LST_Day_1km,
@@ -356,7 +359,7 @@ full_brazil_env_vars_v2 <- full_brazil_env_vars %>%
          AvgRad = full_brazil_AvgRad_raw.csv) %>%
   filter(Code %in% brazil_munis_filter$Code) %>%
   mutate(StableLights = NA) %>%
-  select(Code, Year, Country, NDVI, EVI, LST_Day, LST_Night,
+  dplyr::select(Code, Year, Country, NDVI, EVI, LST_Day, LST_Night,
          HNTL, StableLights, AvgRad, Precip,
          Evap_tavg, Qair_f_tavg, SoilMoi00_10cm_tavg, Wind_f_tavg,
          Tair_f_tavg, everything())
@@ -406,5 +409,49 @@ aad_v2 %>% filter(Country == "Peru") %>% View("peru")
 ## Missing
 
 naniar::gg_miss_var(aad_v2 %>%
-                      select(-c(Chikungunya:Zika, OptTemp_Obs:Malaria_OptTemp)),
+                      dplyr::select(-c(Chikungunya:Zika, OptTemp_Obs:Malaria_OptTemp)),
                     facet = Year)
+
+processed_colombia_files_v2 <- list.files("~/peregrine_amazon/data/colombia/processed/v2/", full.names = T)
+
+sapply(sapply(processed_colombia_files, readRDS), names)
+
+full_colombia_env_vars <- data.frame(MuniCode = NA, Year = NA, Country = NA, stringsAsFactors = F)
+for(file in processed_colombia_files_v2){
+  print(file)
+  data <- readRDS(file)
+  full_colombia_env_vars = full_join(full_colombia_env_vars, data, by = c('MuniCode', 'Year', 'Country'))
+}
+
+full_colombia_env_vars_v2 <- full_colombia_env_vars %>%
+  filter(Year > 2000) %>%
+  # dplyr::select(-Day) %>%
+  rename(Code = MuniCode,
+         HNTL = full_colombia_HNTL.csv,
+         LST_Day = LST_Day_1km,
+         LST_Night = LST_Night_1km,
+         Precip = `full_colombia_precip_00-21.csv`) %>%
+         # StableLights = full_colombia_StableLights_raw.csv,
+         # AvgRad = full_colombia_AvgRad_raw.csv) %>%
+  filter(Code %in% colombia_munis_filter$Code) %>%
+  dplyr::select(Code, Year, Country, LST_Day, LST_Night,
+         HNTL, Precip,
+         Evap_tavg, Qair_f_tavg, SoilMoi00_10cm_tavg, Wind_f_tavg,
+         Tair_f_tavg, everything())
+
+full_colombia_env_vars_v2 %>% summary()
+
+
+aad_v4 <- aad %>%
+  mutate(Country = as.factor(Country)) %>%
+  filter(Code %in% intersect(aad$Code, full_colombia_env_vars_v2$Code)) %>%
+  full_join(full_colombia_env_vars_v2) %>%
+  group_by(Country) %>%
+  arrange(Code, Year) %>%
+  group_by(Code, Year, Country) %>%
+  # fill(Name:Malaria_OptTemp, .direction = 'down') %>%
+  # unique() %>%
+  # filter(row_number() == 2) %>%
+  ungroup() %>%
+  mutate(Name = str_to_sentence(Name))
+
