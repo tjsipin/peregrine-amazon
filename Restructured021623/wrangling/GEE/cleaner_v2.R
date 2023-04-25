@@ -784,3 +784,56 @@ naniar::gg_miss_var(aad_v5 %>%
                       dplyr::select(c(Year, 92:102)),
                     facet = Year)
 
+# Compare old aad and new aad for sanity check
+
+aad_v6 <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds")
+
+old_aad <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
+  tibble()
+
+# get variable names and codes present in both data sets
+var_names <- intersect(names(aad_v6), names(old_aad))
+codes <- intersect(aad_v6$Code, old_aad$Code)
+
+aad_v6_subset <- aad_v6 %>%
+  select(all_of(var_names), CL, forest_density) %>%
+  rename(pland_forest=forest_density) %>%
+  filter(Code %in% codes) %>%
+  filter(Year < 2020) %>% # Year 2021 not included in old_aad
+  group_by(Code, Year) %>%
+  arrange(Code, .by_group = T) %>%
+  ungroup()
+
+old_aad_subset <- old_aad %>%
+  select(all_of(var_names), CL=Cutaneous.Leishmaniasis, pland_forest=pland_forest) %>%
+  filter(Code %in% codes) %>%
+  filter(Year > 2000) %>% # Year 2000 not included in aad_v6 since no CL was reported
+  group_by(Code, Year) %>%
+  arrange(Code, .by_group = T) %>%
+  filter(!is.na(CL)) %>%
+  filter(!is.na(pland_forest)) %>%
+  ungroup()
+
+( ( old_aad_subset$Code %>% unique() %>% sort() ) == ( aad_v6_subset$Code %>% unique() %>% sort() ) ) %>%
+  summary() # all true
+
+old_aad_subset_summarized <- old_aad_subset %>%
+  summarise(across(where(is.numeric), list(mean=mean, var=var), na.rm=T))
+
+aad_v6_subset_summarized <- aad_v6_subset %>%
+  summarise(across(where(is.numeric), list(mean=mean, var=var), na.rm=T)) %>%
+  select(names(old_aad_subset_summarized))
+
+(aad_v6_subset_summarized - old_aad_subset_summarized) %>% View()
+
+both_summarised <- rbind(aad_v6_subset_summarized, old_aad_subset_summarized) %>%
+  rbind(aad_v6_subset_summarized - old_aad_subset_summarized) %>%
+  mutate(set = row_number(), .before=Code_mean) %>%
+  tidyr::pivot_longer(cols=!set) %>%
+  tidyr::pivot_wider(names_from=set) %>%
+  rename(statistic = name,
+         aad_v6 = `1`,
+         old_aad = `2`,
+         difference = `3`)
+
+# write.csv(both_summarised, "~/peregrine_amazon/data/wrangling/both_summarised.csv")
