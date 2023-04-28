@@ -1052,7 +1052,7 @@ weighted_v2.p_val.auc_out
 
 It seems like the model using the `weighted_v2` variables is the best performing.
 
-#### Sanity check
+## Sanity check
 
 Let's use the full set of variables.
 
@@ -1124,5 +1124,53 @@ ggplot(full.incorrect.important_vars) +
   geom_density(aes(x = value,
                    col = correct)) +
   facet_wrap(facets='name', scales='free')
+```
+
+#### Get spatial distribution of correctly and incorrectly classified municipios
+
+```{r}
+# get a data frame that gives a percentage of how many instances each municipio was classified incorrectly
+percent_wrong.df <- full.incorrect %>% 
+  select(Code, Year, Country, correct, 
+         land_use_change, forest_density, forest_fragmentation, edge_loss) %>% 
+  group_by(Code) %>% # group by Code when summarizing since number of observations per municipio differ by country and code
+  mutate(num_years = unique(Year) %>% length(),
+         num_correct = sum(correct)) %>% 
+  summarise(percent_wrong = 1 - (num_correct/num_years),
+            median_deforested = median(land_use_change),
+            max_forest_change = max(forest_density) - min(forest_density),
+            mean_forest_fragmentation = mean(forest_fragmentation),
+            mean_edge_loss = mean(edge_loss)) %>% 
+  ungroup()
+
+geom.df <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests_geom.rds") %>% 
+  select(Code, geometry) %>% 
+  unique()
+
+percent_wrong.geom.df <- percent_wrong.df %>% 
+  left_join(geom.df, by='Code') %>% 
+  filter(!is.na(percent_wrong)) %>% 
+  sf::st_as_sf() %>% 
+  unique()
+
+percent_wrong.all_incorrect.df <- percent_wrong.geom.df %>% 
+  filter(percent_wrong == 1)
+
+ggplot(percent_wrong.all_incorrect.df) +
+  geom_density(aes(x=max_forest_change))
+
+percent_wrong.no_correct.df <- percent_wrong.geom.df %>% 
+  filter(percent_wrong > 0)
+
+ggplot(percent_wrong.no_correct.df) +
+  geom_density(aes(x=max_forest_change))
+
+# maps; change parameters in zcol 
+mapview::mapview(percent_wrong.all_incorrect.df, zcol = 'mean_edge_loss')
+mapview::mapview(percent_wrong.no_correct.df, zcol = 'mean_edge_loss')
+
+
+percent_wrong.no_correct.df %>% summary()
+percent_wrong.all_incorrect.df %>% summary()
 ```
 
