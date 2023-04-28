@@ -619,6 +619,8 @@ all_precip_super <- brazil_precip_super %>%
 SWO <- read.csv("~/peregrine_amazon/data/SWOccurrence/SWOccurrence.csv") %>%
   select(-c(system.index, .geo, max_extent, transition))
 
+#
+
 # create names dictionary
 aad_names <- aad %>%
   select(Name, Code, Country) %>%
