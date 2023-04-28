@@ -1060,6 +1060,7 @@ Let's use the full set of variables.
 ## auc variables first ##
 full.predictor_names <- data %>% 
   select(-c(Name, Country, Code, CL, fold)) %>% 
+  names()
 
 full.ml_formula <- as.formula(paste0("CL ~", paste(full.predictor_names, collapse=" + ")))
 
