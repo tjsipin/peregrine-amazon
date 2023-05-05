@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, cache=T)
 library(tidyr)
 library(sf)
 library(dplyr)
@@ -35,20 +35,67 @@ predictor_names <- data %>%
 
 ## Spaciotemporal CV
 
-We try different approaches to troubleshoot problems that we may encounter.
+We try different approaches to troubleshoot problems that we may encounter. The basic structure of each approach is simple. Use a spatiotemporal cross validation approach to test the model on a linear regression model. For every spatiotemporal fold $ij$, we use all data outside of the fold $ij$ as the training data and test it on the data inside of the $ij$ fold. Then we gather the optimal threshold using a ROAUC curve on some validation data and finally test it on the untouched testing data. 
 
 ### Naive approach
 
+Below, we just create a model on all the data without any spatiotemporal cross validation to see the top explanatory variables and compare with each approach.
+
 ```{r}
-# general glm to get important variables
+set.seed(123)
 
-gen.lin_reg_mod <- glm(ml_formula, data=data, family=binomial)
+full.predictor_names <- data %>% 
+  select(-c(Name, Country, Code, CL, fold)) %>% 
+  names()
 
-gen.vip <- vip::vip(gen.lin_reg_mod, num_features=length(predictor_names)-1)
-gen.vip$data
+full.ml_formula <- as.formula(paste0("CL ~", paste(full.predictor_names, collapse=" + ")))
+
+# get testing and training split
+split <- initial_split(data, strata = CL)
+full.datrain <- training(split)
+full.datest <- testing(split)
+
+# get model
+full.mod <- glm(full.ml_formula, data=full.datrain, family=binomial)
+
+# calculate out of sample model performance on full.datest
+full.oob <- predict(full.mod, newdata=full.datest, type='response', na.action = na.pass)
+
+full.temp_auc_out <- pROC::roc(response = full.datest$CL, predictor= full.oob, levels=c(0,1), auc = TRUE)
+
+full.best_threshold_out <- pROC::coords(full.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
+full.metrica.format <- data.frame(
+  cbind(ifelse(full.datest$CL==1, 1, 0),
+        ifelse(full.oob>=full.best_threshold_out[1,1], 1, 0))) %>% # 0.821
+  mutate_all(as.factor)
+
+colnames(full.metrica.format) <- c("labels","predictions")
+rownames(full.metrica.format) <- 1:dim(full.metrica.format)[1]
+
+full.auc_out <- pROC::roc(response = full.metrica.format$labels, predictor= full.metrica.format$predictions %>% as.numeric() - 1, levels=c(0,1), auc = TRUE)
+
+full.metrica.format.confusionMatrix <- full.metrica.format$predictions %>% 
+  confusionMatrix(positive='1', reference=full.metrica.format$labels)
+
+full.sensitivity_out <- caret::recall(
+  data = full.metrica.format.confusionMatrix$table, 
+  relevant = rownames(full.metrica.format.confusionMatrix$table)[2]
+) 
+full.specificity_out <- caret::precision(
+  data = full.metrica.format.confusionMatrix$table,
+  relevant = rownames(full.metrica.format.confusionMatrix$table)[2]
+)
+
+full.var_imp_vars <- vip::vip(full.mod, num_features=20)
+full.var_imp_vars
 ```
 
-```{r}
+It seems that the socioeconomic and elevation variables sit at the top of the importance plot, as well as temperature and precipitation. We should take this with a grain of salt as it's not terribly rigorous.
+
+Now we attempt to run a bare-bones spatiotemporal cross validation approach. Here, we make sure that each testing fold analyzed has both present and absent points. Then we take and split the training data to create a validation set for model tuning in order to save the testing set `datest` for the end. Testing on the `datrain.test` data, we get a set of most important predictors and optimal threshold to use on `datest`. We finally save the metrics to aggregate later before moving onto the next spatiotemporal fold.
+
+```{r, eval=F}
+set.seed(123)
 for(j in data$Year %>% unique() %>% sort()){
   for(i in data$fold %>% unique() %>% sort()){
     print(paste(i,j, sep="_"))
@@ -60,23 +107,24 @@ for(j in data$Year %>% unique() %>% sort()){
       filter(Year == j,
              fold == i)
     
+    # skip fold if there is a complete imbalance of present vs. absent CL
     if(datest$CL %>% unique() %>% length() != 2){next}
     
-    # second split (on datrain) before testing on datest
+    # second split (on datrain) before testing on datest for further validation
     datrain.split <- initial_split(datrain)
     datrain.train <- training(datrain.split)
     datrain.test <- testing(datrain.split)
   
     # get initial model
-    init.mod <- glm(ml_formula, data=datrain.train, family=binomial)
+    init.mod <- glm(full.ml_formula, data=datrain.train, family=binomial)
     
     # calculate out of sample model performance on datrain.test
-    oob.datrain.test <- predict(log_reg_mod, newdata=datrain.test, type='response') 
+    oob.datrain.test <- predict(full.mod, newdata=datrain.test, type='response') 
     auc_out.datrain.test <- pROC::roc(response = datrain.test$CL, predictor= oob.datrain.test, levels=c(0,1), auc = TRUE)
     best_threshold_out.datrain.test <- pROC::coords(auc_out.datrain.test, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
     metrica.format.datrain.test <- data.frame(
       cbind(ifelse(datrain.test$CL==1, 1, 0),
-            ifelse(oob.datrain.test>=best_threshold_out[1,1], 1, 0))) %>% 
+            ifelse(oob.datrain.test>=best_threshold_out.datrain.test[1,1], 1, 0))) %>% 
       mutate_all(as.factor)
     
     colnames(metrica.format.datrain.test) <- c("labels","predictions")
@@ -85,14 +133,16 @@ for(j in data$Year %>% unique() %>% sort()){
    metrica.format.datrain.test <- metrica.format.datrain.test$predictions %>% 
       confusionMatrix(positive='1', reference=metrica.format.datrain.test$labels)
     
-    sensitivity_out.datrain.test <- caret::recall(data = metrica.format.datrain.test$table, 
-                                                  relevant = rownames(metrica.format.datrain.test$table)[2]) 
-    specificity_out.datrain.test <- caret::precision(data = metrica.format.datrain.test$table, 
-                                                     relevant = rownames(metrica.format.datrain.test$table)[2])
+    sensitivity_out.datrain.test <- caret::recall(
+      data = metrica.format.datrain.test$table, 
+      relevant = rownames(metrica.format.datrain.test$table)[2]
+    ) 
+    specificity_out.datrain.test <- caret::precision(
+      data = metrica.format.datrain.test$table, 
+      relevant = rownames(metrica.format.datrain.test$table)[2]
+    )
     
     var_imp_vars.datrain.test <- vip::vip(init.mod)$data$Variable
-    
-    
     
     # for retrieval later
     datrain.test.metrics <- list(
@@ -102,7 +152,7 @@ for(j in data$Year %>% unique() %>% sort()){
       sensitivity = sensitivity_out.datrain.test,
       specificity = specificity_out.datrain.test,
       imp_vars = var_imp_vars.datrain.test)
-    
+
     edited.predictor_names <- c(datrain.test.metrics$imp_vars, "forest_density", "forest_fragmentation", "land_use_change", "edge_loss")
     ## second model on all of datrain
     edited.ml_formula <- as.formula(paste0("CL ~ ", paste(edited.predictor_names, collapse="+")))
@@ -115,7 +165,7 @@ for(j in data$Year %>% unique() %>% sort()){
     best_threshold_out.datest <- pROC::coords(auc_out.datest, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
     metrica.format.datest <- data.frame(
       cbind(ifelse(datest$CL==1, 1, 0),
-            ifelse(oob.datest>=best_threshold_out[1,1], 1, 0))) %>% 
+            ifelse(oob.datest>=best_threshold_out.datest[1,1], 1, 0))) %>% 
       mutate_all(as.factor)
     colnames(metrica.format.datest) <- c("labels","predictions")
     rownames(metrica.format.datest) <- 1:dim(metrica.format.datest)[1]
@@ -148,21 +198,33 @@ for(j in data$Year %>% unique() %>% sort()){
 }
 ```
 
-We run into a problem with this approach: the data is imbalanced. Some ST folds (such as fold 2, year 2007) contain no absent cases. Let's try balancing the original data set by randomly sampling positive cases and leaving the others out for the final, in-sample testing. Let's scrap it.
+
 
 ### Random resampling approach
 
-For the most part, our code does not change. But first, we need to redefine the data that we turn into `datrain` and `datest` for each spatiotemporal fold:
+For the most part, our code does not change. But first, we need to redefine the data that we partition into `datrain` and `datest` for each spatiotemporal fold:
 
 ```{r}
 set.seed(123)
-balanced_data_v1 <- data %>% 
+
+# create holdout set
+balanced.holdout.split <- initial_split(data, strata=fold)
+balanced.holdout.train <- training(balanced.holdout.split)
+balanced.holdout.test <- testing(balanced.holdout.split)
+
+balanced_data_v1 <- balanced.holdout.train %>% 
   filter(CL == 1) %>% 
-  slice_sample(n = nrow(data %>% filter(CL == 0))) %>% 
-  rbind(data %>% filter(CL == 0))
+  slice_sample(n = nrow(balanced.holdout.train %>% filter(CL == 0))) %>% 
+  rbind(balanced.holdout.train %>% filter(CL == 0))
+
+dim(data)
+dim(balanced_data_v1)
 ```
 
-```{r}
+Compare the dimensions of the full data and the balanced data. The balanced training data is almost a third of the full data! The following code block uses the same structure as the one above using the full data.
+
+
+```{r, eval=F}
 resume_year = 2001
 for(j in resume_year:max(balanced_data_v1$Year)){
   for(i in balanced_data_v1$fold %>% unique() %>% sort()){
@@ -183,15 +245,15 @@ for(j in resume_year:max(balanced_data_v1$Year)){
     datrain.test <- testing(datrain.split)
   
     # get initial model
-    init.mod <- glm(ml_formula, data=datrain.train, family=binomial)
+    init.mod <- glm(full.ml_formula, data=datrain.train, family=binomial)
     
     # calculate out of sample model performance on datrain.test
-    oob.datrain.test <- predict(log_reg_mod, newdata=datrain.test, type='response') 
+    oob.datrain.test <- predict(init.mod, newdata=datrain.test, type='response') 
     auc_out.datrain.test <- pROC::roc(response = datrain.test$CL, predictor= oob.datrain.test, levels=c(0,1), auc = TRUE)
     best_threshold_out.datrain.test <- pROC::coords(auc_out.datrain.test, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
     metrica.format.datrain.test <- data.frame(
       cbind(ifelse(datrain.test$CL==1, 1, 0),
-            ifelse(oob.datrain.test>=best_threshold_out[1,1], 1, 0))) %>% 
+            ifelse(oob.datrain.test>=best_threshold_out.datrain.test[1,1], 1, 0))) %>% 
       mutate_all(as.factor)
     
     colnames(metrica.format.datrain.test) <- c("labels","predictions")
@@ -200,10 +262,14 @@ for(j in resume_year:max(balanced_data_v1$Year)){
    metrica.format.datrain.test <- metrica.format.datrain.test$predictions %>% 
       confusionMatrix(positive='1', reference=metrica.format.datrain.test$labels)
     
-    sensitivity_out.datrain.test <- caret::recall(data = metrica.format.datrain.test$table, 
-                                                  relevant = rownames(metrica.format.datrain.test$table)[2]) 
-    specificity_out.datrain.test <- caret::precision(data = metrica.format.datrain.test$table, 
-                                                     relevant = rownames(metrica.format.datrain.test$table)[2])
+    sensitivity_out.datrain.test <- caret::recall(
+      data = metrica.format.datrain.test$table, 
+      relevant = rownames(metrica.format.datrain.test$table)[2]
+    ) 
+    specificity_out.datrain.test <- caret::precision(
+      data = metrica.format.datrain.test$table, 
+      relevant = rownames(metrica.format.datrain.test$table)[2]
+    )
     
     var_imp_vars.datrain.test <- vip::vip(init.mod)$data$Variable
     
@@ -230,7 +296,7 @@ for(j in resume_year:max(balanced_data_v1$Year)){
     best_threshold_out.datest <- pROC::coords(auc_out.datest, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
     metrica.format.datest <- data.frame(
       cbind(ifelse(datest$CL==1, 1, 0),
-            ifelse(oob.datest>=best_threshold_out[1,1], 1, 0))) %>% 
+            ifelse(oob.datest>=best_threshold_out.datest[1,1], 1, 0))) %>% 
       mutate_all(as.factor)
     colnames(metrica.format.datest) <- c("labels","predictions")
     rownames(metrica.format.datest) <- 1:dim(metrica.format.datest)[1]
@@ -267,16 +333,16 @@ Maybe we can further choose a better resampling method since we skip a lot of it
 
 ### Resampling method v2
 
-What if we go into each spatiotemporal fold $ij$ and take \$n\_{ij} = \$ number of observations with absent incidence in that spatiotemporal fold? Note that $n_{ij} \geq 0$.
+What if we go into each spatiotemporal fold $ij$ and take $n_{ij} = $ number of observations with absent incidence in that spatiotemporal fold? Note that $n_{ij} \geq 0$.
 
 ```{r}
 set.seed(123)
 balanced_data_v2 <- data.frame()
 
-for(j in data$Year %>% unique() %>% sort()){
-  for(i in data$fold %>% unique() %>% sort()){
+for(j in balanced.holdout.train$Year %>% unique() %>% sort()){
+  for(i in balanced.holdout.train$fold %>% unique() %>% sort()){
     # get ij fold subset
-    data_ij <- data %>% 
+    data_ij <- balanced.holdout.train %>% 
       filter(Year == j,
              fold == i)
     
@@ -313,8 +379,7 @@ for(j in data$Year %>% unique() %>% sort()){
 }
 ```
 
-Let's save this balanced data for later. For now, we get our ideal threshold and predictor variables from `balanced_data_v1`.
-
+Let's save this balanced data for later. For now, we get our ideal threshold and predictor variables from `balanced_data_v1`. To get our threshold, we just take the mean of our thresholds provided by each fold. To get our predictor variables, we count each time the predictor variable appears in all folds. 
 
 ```{r}
 # create empty vectors to be filled
@@ -323,6 +388,7 @@ imp.vars <- c()
 auc <- c()
 p_val <- c()
 
+resume_year <- 2001
 
 for(j in resume_year:max(balanced_data_v1$Year)){
   for(i in balanced_data_v1$fold %>% unique() %>% sort()){
@@ -354,21 +420,30 @@ mean.auc <- mean(auc)
 # get mean accuracy p-value
 mean.p_val <- mean(p_val)
 
-metrics_df.balanced_v1 <- data.frame(metric = c('AUC', 'Accuracy P-value', 'Threshold'), value = c(mean.auc, mean.p_val, mean.threshold))
+metrics_df.balanced_v1 <- data.frame(
+  metric = c('AUC', 'Accuracy P-value', 'Threshold'), 
+  value = c(mean.auc, mean.p_val, mean.threshold)
+)
+
 metrics_df.balanced_v1
 ```
 
+This approach gives a pretty high accuracy p-value (0.52) but decent AUC value (0.76).
+
 #### On threshold
 
-We can probably do better by weighting the threshold by a performance metric like no information rate (NIR) or P-value [Acc \> NIR] (`this.metrics$confusion_matrix$overall["AccuracyPValue"][[1]]`).
+We can probably do better by weighting the threshold by a performance metric like no information rate (NIR) or P-value [Acc > NIR] (`this.metrics$confusion_matrix$overall["AccuracyPValue"][[1]]`).
 
 #### On variable importance
 
 This method by itself can be improved by giving a weight, perhaps weighting by order of importance in each fold or a performance metric. (See above.)
 
-For now, we can carry on with this approach and see how well it performs.
+For now, we can carry on with this approach and see how well it performs. We choose the 10 most popular predictor variables to use in our formula and train a model on the testing data. [TODO: continue]
 
 ```{r}
+#### change v1.datrain/v1.datest -> balanced.holdout.train/v1.datest
+
+set.seed(123)
 # choose the first 10 predictor variables
 v1.imp_vars <- v1.imp.vars.count %>% 
   select(var) %>% 
@@ -380,34 +455,35 @@ v1.predictor_names <- c(v1.imp_vars$var, "forest_density", "forest_fragmentation
   unique()
 
 # get our threshold
-v1.threshold <- metrics_df.balanced_v1 %>% filter(metric=='Threshold') %>% select(value) %>% as.numeric()
+v1.threshold <- metrics_df.balanced_v1 %>% 
+  filter(metric=='Threshold') %>% 
+  select(value) %>% 
+  as.numeric()
 
 # make the formula based on our chosen predictors
 v1.ml_formula <- as.formula(paste0("CL ~", paste(v1.predictor_names, collapse=" + ")))
 
 # get testing and training split
-split <- initial_split(data, strata = CL)
-datrain <- training(split)
-datest <- testing(split)
+# split <- initial_split(data, strata = CL)
+# v1.datrain <- training(split)
+# v1.datest <- testing(split)
+
+v1.datrain <- balanced.holdout.train
+v1.datest <- balanced.holdout.test
 
 # get model
-v1.mod <- glm(v1.ml_formula, data=datrain, family=binomial)
+v1.mod <- glm(v1.ml_formula, data=v1.datrain, family=binomial) ##
 
-# calculate out of sample model performance on datest
-v1.oob <- predict(v1.mod, newdata=datest, type='response', na.action = na.pass)
+# calculate out of sample model performance on v1.datest
+v1.oob <- predict(v1.mod, newdata=v1.datest, type='response', na.action = na.pass)
 
-v1.temp_auc_out <- pROC::roc(response = datest$CL, predictor= v1.oob, levels=c(0,1), auc = TRUE)
+v1.temp_auc_out <- pROC::roc(response = v1.datest$CL, predictor= v1.oob, levels=c(0,1), auc = TRUE)
 
 v1.best_threshold_out <- pROC::coords(v1.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
 v1.metrica.format <- data.frame(
-  cbind(ifelse(datest$CL==1, 1, 0),
+  cbind(ifelse(v1.datest$CL==1, 1, 0),
         ifelse(v1.oob>=v1.best_threshold_out[1,1], 1, 0))) %>% # v1.best_threshold_out[1,1] -> 0.8243; 
   mutate_all(as.factor)
-
-# v1.metrica.format <- data.frame(
-#   cbind(ifelse(datest$CL==1, 1, 0),
-#         ifelse(v1.oob>=v1.threshold, 1, 0))) %>% # v1.threshold -> 0.5279; #### Do not use average threshold obtained above;
-#   mutate_all(as.factor)
 
 colnames(v1.metrica.format) <- c("labels","predictions")
 rownames(v1.metrica.format) <- 1:dim(v1.metrica.format)[1]
@@ -417,15 +493,22 @@ v1.auc_out <- pROC::roc(response = v1.metrica.format$labels, predictor= v1.metri
 v1.metrica.format.confusionMatrix <- v1.metrica.format$predictions %>% 
   confusionMatrix(positive='1', reference=v1.metrica.format$labels)
 
-v1.sensitivity_out <- caret::recall(data = v1.metrica.format.confusionMatrix$table, 
-                                    relevant = rownames(v1.metrica.format.confusionMatrix$table)[2]) 
-v1.specificity_out <- caret::precision(data = v1.metrica.format.confusionMatrix$table, 
-                                                 relevant = rownames(v1.metrica.format.confusionMatrix$table)[2])
+v1.sensitivity_out <- caret::recall(
+  data = v1.metrica.format.confusionMatrix$table, 
+  relevant = rownames(v1.metrica.format.confusionMatrix$table)[2]
+) 
+v1.specificity_out <- caret::precision(
+  data = v1.metrica.format.confusionMatrix$table, 
+  relevant = rownames(v1.metrica.format.confusionMatrix$table)[2]
+)
 
-v1.var_imp_vars <- vip::vip(v1.mod)
+v1.var_imp_vars <- vip::vip(v1.mod, num_features = 20)
+v1.var_imp_vars
 ```
 
-# Partial dependence plots
+The top variables are precipitation, elevation, and socioeconomic again.
+
+#### Partial dependence plots
 
 ```{r v1 pdp}
 v1.partial.forest_density <- pdp::partial(v1.mod, pred.var='forest_density')
@@ -452,21 +535,19 @@ summary(v1.mod)
 This does not seem to give much deeper insight. We investigate the incorrectly classified observations:
 
 ```{r}
-v1.incorrect <- datest %>% 
-  # filter(row_number() %in% which(v1.metrica.format$labels != v1.metrica.format$predictions))
+v1.incorrect <- balanced.holdout.test %>% 
   mutate(.pred = v1.metrica.format$predictions) %>% 
   mutate(correct = .pred==CL) %>% 
   select(Code, Name, Country, Year, CL, correct, everything())
 
-v1.incorrect %>% summary() 
-# there is a 641 to 959 split between true CL absent vs. present
+v1.incorrect %>% summary() # there is a 1787 to 4768 split between true CL absent vs. present
 
 # plots
 v1.incorrect.important_vars <- v1.incorrect %>% 
   select(Code, Name, Year, CL, correct, v1.imp_vars$var) %>%
   mutate(log_Population = log(Population)) %>% 
   select(-Population) %>% 
-  pivot_longer(cols = forest_density:log_Population)
+  pivot_longer(cols = c(min_Elevation:log_Population))
 
 ggplot(v1.incorrect.important_vars) +
   geom_boxplot(aes(x = correct, 
@@ -479,9 +560,14 @@ ggplot(v1.incorrect.important_vars) +
   facet_wrap(facets='name', scales='free')
 ```
 
+The main takeaways here are that incorrectly identified data seem to have lower forest density, lower population, higher wind speeds than correctly identified data.
+
 ### Using resampling method v2 (balanced_data_v2)
 
-```{r}
+We go on now to use the `balanced_data_v2` data set.
+
+```{r, eval=F}
+set.seed(123)
 current_j = 2001
 
 for(j in current_j:max(balanced_data_v2$Year)){
@@ -504,15 +590,15 @@ for(j in current_j:max(balanced_data_v2$Year)){
     datrain.test <- testing(datrain.split)
   
     # get initial model
-    init.mod <- glm(ml_formula, data=datrain.train, family=binomial)
+    init.mod <- glm(full.ml_formula, data=datrain.train, family=binomial)
     
     # calculate out of sample model performance on datrain.test
-    oob.datrain.test <- predict(log_reg_mod, newdata=datrain.test, type='response') 
+    oob.datrain.test <- predict(init.mod, newdata=datrain.test, type='response') 
     auc_out.datrain.test <- pROC::roc(response = datrain.test$CL, predictor= oob.datrain.test, levels=c(0,1), auc = TRUE)
     best_threshold_out.datrain.test <- pROC::coords(auc_out.datrain.test, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
     metrica.format.datrain.test <- data.frame(
       cbind(ifelse(datrain.test$CL==1, 1, 0),
-            ifelse(oob.datrain.test>=best_threshold_out[1,1], 1, 0))) %>% 
+            ifelse(oob.datrain.test>=best_threshold_out.datrain.test[1,1], 1, 0))) %>% 
       mutate_all(as.factor)
     
     colnames(metrica.format.datrain.test) <- c("labels","predictions")
@@ -521,13 +607,16 @@ for(j in current_j:max(balanced_data_v2$Year)){
    metrica.format.datrain.test <- metrica.format.datrain.test$predictions %>% 
       confusionMatrix(positive='1', reference=metrica.format.datrain.test$labels)
     
-    sensitivity_out.datrain.test <- caret::recall(data = metrica.format.datrain.test$table, 
-                                                  relevant = rownames(metrica.format.datrain.test$table)[2]) 
-    specificity_out.datrain.test <- caret::precision(data = metrica.format.datrain.test$table, 
-                                                     relevant = rownames(metrica.format.datrain.test$table)[2])
+    sensitivity_out.datrain.test <- caret::recall(
+      data = metrica.format.datrain.test$table, 
+      relevant = rownames(metrica.format.datrain.test$table)[2]
+    ) 
+    specificity_out.datrain.test <- caret::precision(
+      data = metrica.format.datrain.test$table, 
+      relevant = rownames(metrica.format.datrain.test$table)[2]
+    )
     
-    var_imp_vars.datrain.test <- vip::vip(init.mod)$data$Variable
-    
+    var_imp_vars.datrain.test <- vip::vip(init.mod)$data$Variable # picks top ten features
     
     
     # for retrieval later
@@ -537,7 +626,8 @@ for(j in current_j:max(balanced_data_v2$Year)){
       confusion_matrix = metrica.format.datrain.test,
       sensitivity = sensitivity_out.datrain.test,
       specificity = specificity_out.datrain.test,
-      imp_vars = var_imp_vars.datrain.test)
+      imp_vars = var_imp_vars.datrain.test
+    )
     
     edited.predictor_names <- c(datrain.test.metrics$imp_vars, "forest_density", "forest_fragmentation", "land_use_change", "edge_loss")
     ## second model on all of datrain
@@ -551,7 +641,7 @@ for(j in current_j:max(balanced_data_v2$Year)){
     best_threshold_out.datest <- pROC::coords(auc_out.datest, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
     metrica.format.datest <- data.frame(
       cbind(ifelse(datest$CL==1, 1, 0),
-            ifelse(oob.datest>=best_threshold_out[1,1], 1, 0))) %>% 
+            ifelse(oob.datest>=best_threshold_out.datest[1,1], 1, 0))) %>% 
       mutate_all(as.factor)
     colnames(metrica.format.datest) <- c("labels","predictions")
     rownames(metrica.format.datest) <- 1:dim(metrica.format.datest)[1]
@@ -634,6 +724,9 @@ metrics_df.balanced_v1
 ```
 
 ```{r}
+# change meaning of v2.datrain and v2.datest to balanced.holdout.train and balanced.holdout.test
+
+set.seed(123)
 v2.imp_vars <- v2.imp.vars.count %>% 
   select(var) %>% 
   filter(row_number() <= 10) %>% 
@@ -648,27 +741,32 @@ v2.ml_formula <- as.formula(paste0("CL ~", paste(v2.predictor_names, collapse=" 
 
 # get testing and training split
 split <- initial_split(data, strata = CL)
-datrain <- training(split)
-datest <- testing(split)
+# v2.datrain <- training(split)
+# v2.datest <- testing(split)
+
+v2.datrain <- balanced.holdout.train
+v2.datest <- balanced.holdout.test
 
 # get model
-v2.mod <- glm(v2.ml_formula, data=datrain, family=binomial)
+v2.mod <- glm(v2.ml_formula, data=v2.datrain, family=binomial)
 
-# calculate out of sample model performance on datest
-v2.oob <- predict(v2.mod, newdata=datest, type='response', na.action = na.exclude)
+# calculate out of sample model performance on v2.datest
+v2.oob <- predict(v2.mod, newdata=v2.datest, type='response', na.action = na.pass)
 
-v2.temp_auc_out <- pROC::roc(response = datest$CL, predictor= v2.oob, levels=c(0,1), auc = TRUE)
+v2.temp_auc_out <- pROC::roc(response = v2.datest$CL, predictor= v2.oob, levels=c(0,1), auc = TRUE)
 
 v2.best_threshold_out <- pROC::coords(v2.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
 v2.metrica.format <- data.frame(
-  cbind(ifelse(datest$CL==1, 1, 0),
+  cbind(ifelse(v2.datest$CL==1, 1, 0),
         ifelse(v2.oob>=v2.best_threshold_out[1,1], 1, 0))) %>% # 0.821
   mutate_all(as.factor)
 
 colnames(v2.metrica.format) <- c("labels","predictions")
 rownames(v2.metrica.format) <- 1:dim(v2.metrica.format)[1]
 
-v2.auc_out <- pROC::roc(response = v2.metrica.format$labels, predictor= v2.metrica.format$predictions %>% as.numeric() - 1, levels=c(0,1), auc = TRUE)
+v2.auc_out <- pROC::roc(response = v2.metrica.format$labels, 
+                        predictor = v2.metrica.format$predictions %>% as.numeric() - 1,
+                        levels=c(0,1), auc = TRUE)
 
 v2.metrica.format.confusionMatrix <- v2.metrica.format$predictions %>% 
   confusionMatrix(positive='1', reference=v2.metrica.format$labels)
@@ -678,11 +776,24 @@ v2.sensitivity_out <- caret::recall(data = v2.metrica.format.confusionMatrix$tab
 v2.specificity_out <- caret::precision(data = v2.metrica.format.confusionMatrix$table, 
                                                  relevant = rownames(v2.metrica.format.confusionMatrix$table)[2])
 
-v2.var_imp_vars <- vip::vip(v2.mod)
+v2.var_imp_vars <- vip::vip(v2.mod, num_features=20)
 ```
 
 ```{r}
-v2.incorrect <- datest %>% 
+v2.var_imp_vars
+```
+
+
+The variable importance plot looks very similar to that of `balanced_data_v1`.
+
+
+```{r}
+v1.var_imp_vars
+```
+
+
+```{r}
+v2.incorrect <- v2.datest %>% 
   # filter(row_number() %in% which(v2.metrica.format$labels != v2.metrica.format$predictions))
   mutate(.pred = v2.metrica.format$predictions) %>% 
   mutate(correct = .pred==CL) %>% 
@@ -696,7 +807,7 @@ v2.incorrect.important_vars <- v2.incorrect %>%
   select(Code, Name, Year, CL, correct, v2.imp_vars$var) %>%
   mutate(log_Population = log(Population)) %>% 
   select(-Population) %>% 
-  pivot_longer(cols = forest_density:log_Population)
+  pivot_longer(cols = min_Elevation:log_Population)
 
 ggplot(v2.incorrect.important_vars) +
   geom_boxplot(aes(x = correct, 
@@ -723,11 +834,11 @@ v2.auc_out %>% plot()
 v2.auc_out$auc
 ```
 
-There is an improvement in model performance.
-
 Now we can return our focus to using a weighted approach to choosing a threshold and predictor variables using `this.metrics$confusion_matrix$overall["AccuracyPValue"][[1]]`. Let's try it on the metrics produced by `balanced_data_v1`
 
 ### Weighted approach
+
+For this approach, we get two sets of the top ranked variables based on the AUC and accuracy p-value of their respective models then test them separately.
 
 #### balanced_data_v1
 
@@ -776,20 +887,23 @@ imp.vars.df.ranked <- imp.vars %>%
          auc.rank = rank(auc),
          p_val.rank = rank(p_val)) %>% 
   group_by(variable) %>% 
-  summarise(mean.auc.rank = mean(auc),
-            mean.p_val.rank = mean(p_val)) 
+  summarise(mean.auc = mean(auc),
+            mean.p_val = mean(p_val)) 
 
+# get auc vars
 weighted_v1.auc.vars <- imp.vars.df.ranked %>% 
-  arrange(desc(mean.auc.rank))
+  arrange(desc(mean.auc))
 
+# get p-val vars
 weighted_v1.p_val.vars <- imp.vars.df.ranked %>% 
-  arrange((mean.p_val.rank))
+  arrange((mean.p_val))
 
 metrics_df.balanced_v1 <- data.frame(metric = c('AUC', 'Accuracy P-value', 'Threshold'), value = c(mean.auc, mean.p_val, mean.threshold))
 metrics_df.balanced_v1
 ```
 
 ```{r}
+# Select the top 10 for each set
 weighted_v1.auc.imp_vars <- weighted_v1.auc.vars %>% 
   filter(row_number() <= 10)
 
@@ -798,6 +912,9 @@ weighted_v1.p_val.imp_vars <- weighted_v1.p_val.vars %>%
 ```
 
 ```{r weighted_v1 auc}
+# weighted_v1.datrain/datest -> holdout.train/test
+
+set.seed(123)
 ## auc variables first ##
 weighted_v1.auc.predictor_names <- c(weighted_v1.auc.imp_vars$variable, "forest_density", "forest_fragmentation", "land_use_change", "edge_loss") %>%
   unique()
@@ -805,21 +922,24 @@ weighted_v1.auc.predictor_names <- c(weighted_v1.auc.imp_vars$variable, "forest_
 weighted_v1.auc.ml_formula <- as.formula(paste0("CL ~", paste(weighted_v1.auc.predictor_names, collapse=" + ")))
 
 # get testing and training split
-split <- initial_split(data, strata = CL)
-datrain <- training(split)
-datest <- testing(split)
+# split <- initial_split(data, strata = CL)
+# weighted_v1.datrain <- training(split)
+# weighted_v1.datest <- testing(split)
+
+weighted_v1.datrain <- balanced.holdout.train
+weighted_v1.datest <- balanced.holdout.test
 
 # get model
-weighted_v1.auc.mod <- glm(weighted_v1.auc.ml_formula, data=datrain, family=binomial)
+weighted_v1.auc.mod <- glm(weighted_v1.auc.ml_formula, data=weighted_v1.datrain, family=binomial)
 
-# calculate out of sample model performance on datest
-weighted_v1.auc.oob <- predict(weighted_v1.auc.mod, newdata=datest, type='response', na.action = na.pass)
+# calculate out of sample model performance on v1.datest
+weighted_v1.auc.oob <- predict(weighted_v1.auc.mod, newdata=weighted_v1.datest, type='response', na.action = na.pass)
 
-weighted_v1.auc.temp_auc_out <- pROC::roc(response = datest$CL, predictor= weighted_v1.auc.oob, levels=c(0,1), auc = TRUE)
+weighted_v1.auc.temp_auc_out <- pROC::roc(response = weighted_v1.datest$CL, predictor= weighted_v1.auc.oob, levels=c(0,1), auc = TRUE)
 
 weighted_v1.auc.best_threshold_out <- pROC::coords(weighted_v1.auc.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
 weighted_v1.auc.metrica.format <- data.frame(
-  cbind(ifelse(datest$CL==1, 1, 0),
+  cbind(ifelse(weighted_v1.datest$CL==1, 1, 0),
         ifelse(weighted_v1.auc.oob>=weighted_v1.auc.best_threshold_out[1,1], 1, 0))) %>% # 0.821
   mutate_all(as.factor)
 
@@ -840,6 +960,7 @@ weighted_v1.auc.var_imp_vars <- vip::vip(weighted_v1.auc.mod)
 ```
 
 ```{r weighted_v1 p_val}
+set.seed(123)
 ## auc variables first ##
 weighted_v1.p_val.predictor_names <- c(weighted_v1.p_val.imp_vars$variable, "forest_density", "forest_fragmentation", "land_use_change", "edge_loss") %>%
   unique()
@@ -847,21 +968,23 @@ weighted_v1.p_val.predictor_names <- c(weighted_v1.p_val.imp_vars$variable, "for
 weighted_v1.p_val.ml_formula <- as.formula(paste0("CL ~", paste(weighted_v1.p_val.predictor_names, collapse=" + ")))
 
 # get testing and training split
-split <- initial_split(data, strata = CL)
-datrain <- training(split)
-datest <- testing(split)
+# split <- initial_split(data, strata = CL)
+# weighted_v1.datrain <- training(split)
+# weighted_v1.datest <- testing(split)
+weighted_1.datrain <- balanced.holdout.train
+weighted_v1.datest <- balanced.holdout.test
 
 # get model
-weighted_v1.p_val.mod <- glm(weighted_v1.p_val.ml_formula, data=datrain, family=binomial)
+weighted_v1.p_val.mod <- glm(weighted_v1.p_val.ml_formula, data=weighted_v1.datrain, family=binomial)
 
-# calculate out of sample model performance on datest
-weighted_v1.p_val.oob <- predict(weighted_v1.p_val.mod, newdata=datest, type='response', na.action = na.pass)
+# calculate out of sample model performance on weighted_v1.datest
+weighted_v1.p_val.oob <- predict(weighted_v1.p_val.mod, newdata=weighted_v1.datest, type='response', na.action = na.pass)
 
-weighted_v1.p_val.temp_auc_out <- pROC::roc(response = datest$CL, predictor= weighted_v1.p_val.oob, levels=c(0,1), auc = TRUE)
+weighted_v1.p_val.temp_auc_out <- pROC::roc(response = weighted_v1.datest$CL, predictor= weighted_v1.p_val.oob, levels=c(0,1), auc = TRUE)
 
 weighted_v1.p_val.best_threshold_out <- pROC::coords(weighted_v1.p_val.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
 weighted_v1.p_val.metrica.format <- data.frame(
-  cbind(ifelse(datest$CL==1, 1, 0),
+  cbind(ifelse(weighted_v1.datest$CL==1, 1, 0),
         ifelse(weighted_v1.p_val.oob>=weighted_v1.p_val.best_threshold_out[1,1], 1, 0))) %>% # 0.821
   mutate_all(as.factor)
 
@@ -881,6 +1004,7 @@ weighted_v1.p_val.specificity_out <- caret::precision(data = weighted_v1.p_val.m
 weighted_v1.p_val.var_imp_vars <- vip::vip(weighted_v1.p_val.mod)
 ```
 
+Both models severely underperform when classifying absent points.
 
 #### balanced_data_v2
 
@@ -951,6 +1075,8 @@ weighted_v2.p_val.imp_vars <- weighted_v2.p_val.vars %>%
 ```
 
 ```{r weighted_v2 auc}
+set.seed(123)
+
 ## auc variables first ##
 weighted_v2.auc.predictor_names <- c(weighted_v2.auc.imp_vars$variable, "forest_density", "forest_fragmentation", "land_use_change", "edge_loss") %>%
   unique()
@@ -959,20 +1085,22 @@ weighted_v2.auc.ml_formula <- as.formula(paste0("CL ~", paste(weighted_v2.auc.pr
 
 # get testing and training split
 split <- initial_split(data, strata = CL)
-datrain <- training(split)
-datest <- testing(split)
+# weighted_v2.datrain <- training(split)
+# weighted_v2.datest <- testing(split)
+weighted_v2.datrain <- balanced.holdout.train
+weighted_v2.datest <- balanced.holdout.test
 
 # get model
-weighted_v2.auc.mod <- glm(weighted_v2.auc.ml_formula, data=datrain, family=binomial)
+weighted_v2.auc.mod <- glm(weighted_v2.auc.ml_formula, data=weighted_v2.datrain, family=binomial)
 
-# calculate out of sample model performance on datest
-weighted_v2.auc.oob <- predict(weighted_v2.auc.mod, newdata=datest, type='response', na.action = na.pass)
+# calculate out of sample model performance on weighted_v2.datest
+weighted_v2.auc.oob <- predict(weighted_v2.auc.mod, newdata=weighted_v2.datest, type='response', na.action = na.pass)
 
-weighted_v2.auc.temp_auc_out <- pROC::roc(response = datest$CL, predictor= weighted_v2.auc.oob, levels=c(0,1), auc = TRUE)
+weighted_v2.auc.temp_auc_out <- pROC::roc(response = weighted_v2.datest$CL, predictor= weighted_v2.auc.oob, levels=c(0,1), auc = TRUE)
 
 weighted_v2.auc.best_threshold_out <- pROC::coords(weighted_v2.auc.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
 weighted_v2.auc.metrica.format <- data.frame(
-  cbind(ifelse(datest$CL==1, 1, 0),
+  cbind(ifelse(weighted_v2.datest$CL==1, 1, 0),
         ifelse(weighted_v2.auc.oob>=weighted_v2.auc.best_threshold_out[1,1], 1, 0))) %>% # 0.821
   mutate_all(as.factor)
 
@@ -993,6 +1121,7 @@ weighted_v2.auc.var_imp_vars <- vip::vip(weighted_v2.auc.mod)
 ```
 
 ```{r weighted_v2 p_val}
+set.seed(123)
 ## auc variables first ##
 weighted_v2.p_val.predictor_names <- c(weighted_v2.p_val.imp_vars$variable, "forest_density", "forest_fragmentation", "land_use_change", "edge_loss") %>%
   unique()
@@ -1001,20 +1130,22 @@ weighted_v2.p_val.ml_formula <- as.formula(paste0("CL ~", paste(weighted_v2.p_va
 
 # get testing and training split
 split <- initial_split(data, strata = CL)
-datrain <- training(split)
-datest <- testing(split)
+# weighted_v2.datrain <- training(split)
+# weighted_v2.datest <- testing(split)
+weighted_v2.datrain <- balanced.holdout.train
+weighted_v2.datest <- balanced.holdout.test
 
 # get model
-weighted_v2.p_val.mod <- glm(weighted_v2.p_val.ml_formula, data=datrain, family=binomial)
+weighted_v2.p_val.mod <- glm(weighted_v2.p_val.ml_formula, data=weighted_v2.datrain, family=binomial)
 
-# calculate out of sample model performance on datest
-weighted_v2.p_val.oob <- predict(weighted_v2.p_val.mod, newdata=datest, type='response', na.action = na.pass)
+# calculate out of sample model performance on weighted_v2.datest
+weighted_v2.p_val.oob <- predict(weighted_v2.p_val.mod, newdata=weighted_v2.datest, type='response', na.action = na.pass)
 
-weighted_v2.p_val.temp_auc_out <- pROC::roc(response = datest$CL, predictor= weighted_v2.p_val.oob, levels=c(0,1), auc = TRUE)
+weighted_v2.p_val.temp_auc_out <- pROC::roc(response = weighted_v2.datest$CL, predictor= weighted_v2.p_val.oob, levels=c(0,1), auc = TRUE)
 
 weighted_v2.p_val.best_threshold_out <- pROC::coords(weighted_v2.p_val.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
 weighted_v2.p_val.metrica.format <- data.frame(
-  cbind(ifelse(datest$CL==1, 1, 0),
+  cbind(ifelse(weighted_v2.datest$CL==1, 1, 0),
         ifelse(weighted_v2.p_val.oob>=weighted_v2.p_val.best_threshold_out[1,1], 1, 0))) %>% # 0.821
   mutate_all(as.factor)
 
@@ -1035,14 +1166,44 @@ weighted_v2.p_val.var_imp_vars <- vip::vip(weighted_v2.p_val.mod)
 ```
 
 
-Let's compare all confusion matrices:
+## Results
+
+We open the results section with the confusion matrices and AUCs of all models.
+
+Full variables:
+
+```{r}
+full.metrica.format.confusionMatrix
+full.auc_out
+```
+
+First unweighted resampling approach (v1):
+
+```{r}
+v1.metrica.format.confusionMatrix
+v1.auc_out
+```
+
+Second unweighted resampling approach (v2):
+
+```{r}
+v2.metrica.format.confusionMatrix
+v2.auc_out
+```
+
+First weighted variables approach (v1):
 
 ```{r}
 weighted_v1.auc.metrica.format.confusionMatrix
 weighted_v1.auc.auc_out
+
 weighted_v1.p_val.metrica.format.confusionMatrix
 weighted_v1.p_val.auc_out
+```
 
+Second weighted variables approach (v2):
+
+```{r}
 weighted_v2.auc.metrica.format.confusionMatrix
 weighted_v2.auc.auc_out
 
@@ -1050,58 +1211,10 @@ weighted_v2.p_val.metrica.format.confusionMatrix
 weighted_v2.p_val.auc_out
 ```
 
-It seems like the model using the `weighted_v2` variables is the best performing.
+Using the weighted variable approaches give very poor performances for predicting absences. The objective "best" performing model is the model using all variables, but close behind are the unweighted variable approaches. These should take the place of the full variable approach since they use less variables, which improves generalizability. 
 
-## Sanity check
-
-Let's use the full set of variables.
-
-```{r}
-## auc variables first ##
-full.predictor_names <- data %>% 
-  select(-c(Name, Country, Code, CL, fold)) %>% 
-  names()
-
-full.ml_formula <- as.formula(paste0("CL ~", paste(full.predictor_names, collapse=" + ")))
-
-# get testing and training split
-split <- initial_split(data, strata = CL)
-datrain <- training(split)
-datest <- testing(split)
-
-# get model
-full.mod <- glm(full.ml_formula, data=datrain, family=binomial)
-
-# calculate out of sample model performance on datest
-full.oob <- predict(full.mod, newdata=datest, type='response', na.action = na.pass)
-
-full.temp_auc_out <- pROC::roc(response = datest$CL, predictor= full.oob, levels=c(0,1), auc = TRUE)
-
-full.best_threshold_out <- pROC::coords(full.temp_auc_out, "best", ret = "threshold") # save this threshold; want: take average of threshold across all spatio-temporal folds
-full.metrica.format <- data.frame(
-  cbind(ifelse(datest$CL==1, 1, 0),
-        ifelse(full.oob>=full.best_threshold_out[1,1], 1, 0))) %>% # 0.821
-  mutate_all(as.factor)
-
-colnames(full.metrica.format) <- c("labels","predictions")
-rownames(full.metrica.format) <- 1:dim(full.metrica.format)[1]
-
-full.auc_out <- pROC::roc(response = full.metrica.format$labels, predictor= full.metrica.format$predictions %>% as.numeric() - 1, levels=c(0,1), auc = TRUE)
-
-full.metrica.format.confusionMatrix <- full.metrica.format$predictions %>% 
-  confusionMatrix(positive='1', reference=full.metrica.format$labels)
-
-full.sensitivity_out <- caret::recall(data = full.metrica.format.confusionMatrix$table, 
-                                    relevant = rownames(full.metrica.format.confusionMatrix$table)[2]) 
-full.specificity_out <- caret::precision(data = full.metrica.format.confusionMatrix$table, 
-                                                 relevant = rownames(full.metrica.format.confusionMatrix$table)[2])
-
-full.var_imp_vars <- vip::vip(full.mod)
-```
-
-
-```{r}
-full.incorrect <- datest %>% 
+```{r, fig.height=12, fig.height=12}
+full.incorrect <- full.datest %>% 
   # filter(row_number() %in% which(full.metrica.format$labels != full.metrica.format$predictions))
   mutate(.pred = full.metrica.format$predictions) %>% 
   mutate(correct = .pred==CL) %>% 
@@ -1119,12 +1232,12 @@ full.incorrect.important_vars <- full.incorrect %>%
 ggplot(full.incorrect.important_vars) +
   geom_boxplot(aes(x = correct, 
                    y = value)) +
-  facet_wrap(facets='name', scales='free')
+  facet_wrap(facets='name', scales='free', ncol = 3)
 
 ggplot(full.incorrect.important_vars) +
   geom_density(aes(x = value,
                    col = correct)) +
-  facet_wrap(facets='name', scales='free')
+  facet_wrap(facets='name', scales='free', ncol = 3)
 ```
 
 #### Get spatial distribution of correctly and incorrectly classified municipios
@@ -1133,7 +1246,7 @@ ggplot(full.incorrect.important_vars) +
 # get a data frame that gives a percentage of how many instances each municipio was classified incorrectly
 percent_wrong.df <- full.incorrect %>% 
   select(Code, Year, Country, correct, 
-         land_use_change, forest_density, forest_fragmentation, edge_loss) %>% 
+         land_use_change, forest_density, forest_fragmentation, edge_loss, mean_Elevation) %>% 
   group_by(Code) %>% # group by Code when summarizing since number of observations per municipio differ by country and code
   mutate(num_years = unique(Year) %>% length(),
          num_correct = sum(correct)) %>% 
@@ -1141,7 +1254,8 @@ percent_wrong.df <- full.incorrect %>%
             median_deforested = median(land_use_change),
             max_forest_change = max(forest_density) - min(forest_density),
             mean_forest_fragmentation = mean(forest_fragmentation),
-            mean_edge_loss = mean(edge_loss)) %>% 
+            mean_edge_loss = mean(edge_loss),
+            mean_Elevation = mean(mean_Elevation)) %>% 
   ungroup()
 
 geom.df <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests_geom.rds") %>% 
@@ -1167,8 +1281,8 @@ ggplot(percent_wrong.no_correct.df) +
   geom_density(aes(x=max_forest_change))
 
 # maps; change parameters in zcol 
-mapview::mapview(percent_wrong.all_incorrect.df, zcol = 'mean_edge_loss')
-mapview::mapview(percent_wrong.no_correct.df, zcol = 'mean_edge_loss')
+mapview::mapview(percent_wrong.all_incorrect.df, zcol = 'mean_forest_fragmentation')
+mapview::mapview(percent_wrong.no_correct.df, zcol = 'mean_forest_fragmentation')
 
 
 percent_wrong.no_correct.df %>% summary()
