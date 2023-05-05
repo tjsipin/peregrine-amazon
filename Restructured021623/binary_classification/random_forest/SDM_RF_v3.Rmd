@@ -1,0 +1,891 @@
+---
+title: "SDM RF"
+author: "TJ Sipin"
+date: "2023-03-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# library(randomForest)
+library(randomForestSRC)
+library(caTools)
+library(sf)
+library(spatialsample)
+library(tidyr)
+library(caret)
+library(raster)
+library(sf)
+library(sp)
+library(rsample)
+library(forcats)
+library(doParallel)
+library(dplyr)
+```
+
+
+## Data
+
+
+```{r}
+## Read in most of data and create indicator variables
+data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>% 
+  mutate(across(contains('pland'), ~ case_when(.x > 0 ~ 1,
+                                               .x == 0 ~ 0)),
+         CL = case_when(CL == 0 ~ 0,
+                        CL > 0 ~ 1) %>% as.factor())
+
+data %>% select(Code, Year, Country, contains('pland')) %>% 
+  summary()
+
+data %>% select(Code, Year, Country, contains('forest')) %>% 
+  summary()
+
+
+```
+
+The data is a stand-in for the data that is currently processing. As of March 10, 2023:
+
+- The complete 2020 data is processing for disease and environmental variables 
+- The updated Colombia environmental variables are also still processing, particularly the Precip data as it hasn't been scaling correctly
+
+Update: March 23, 2023:
+
+- All variables except for landscape metrics are up-to-date (2021)
+- Disease not yet merged, but we have
+
+Update: March 28, 2023
+- Disease merged
+
+
+## Random Forest with all variables
+
+Let's include all variables first to get the variable importance plots to reduce number of variables.
+
+### No spatial-temporal component
+
+#### Data partitioning
+```{r}
+set.seed(777)
+
+full.split <- initial_split(data, strata=CL)
+full.training <- training(full.split) %>% 
+  as.data.frame()
+full.testing <- testing(full.split) %>% 
+  as.data.frame()
+```
+
+#### Get all predictors and make formula
+
+```{r}
+# remove variables to make formula (e.g. don't want Name or Code)
+full.predictors <- data %>% 
+  select(-c(Name, Code, CL, OptTemp_Obs:Malaria_OptTemp, fold, StableLights, AvgRad)) %>% 
+  names()
+
+# output length of predictors
+full.predictors %>% length() # 487
+
+full.formula <- paste("CL ~ ", paste0(full.predictors, collapse=" + ")) %>% 
+  as.formula()
+```
+
+We have 485 total predictors. We want that number to be reduced down to maybe 10-20 to prevent overfitting and increase interpretability.
+
+#### The model
+
+```{r}
+t0 <- Sys.time()
+full.o <- tune(full.formula, data = full.training, rfq = TRUE) # uses (minimizes?) out of bag error
+Sys.time() - t0 # 38 seconds
+
+t0 <- Sys.time()
+# train model
+full.rf0_imb_rfq=imbalanced(
+  full.formula, 
+  ntree=3000, # increase ntree to 3000
+  data=full.training,
+  mtry = as.numeric(full.o$optimal[2]),
+  nodesize = as.numeric(full.o$optimal[1]),
+  method = "rfq",
+  do.trace=T, 
+  importance="random", 
+  statistics = T,
+  forest=T
+)
+Sys.time() - t0 # 90 seconds
+```
+
+```{r}
+full.pred_train <- predict(full.rf0_imb_rfq, full.training)
+```
+
+
+Let's see how this performs on the `full.testing`.
+
+```{r}
+full.pred_test <- predict(full.rf0_imb_rfq, full.testing)
+```
+
+These results are incredible. We have AUC values of over 90% on both the training and testing data. We investigate which variables are important.
+
+```{r}
+full.vimp <- vimp(full.rf0_imb_rfq)
+print(full.vimp$importance)
+
+full.rf0_imb_rfq$xvar.names
+```
+
+
+## Spatiotemporal Random Forest
+
+
+### For loop (all years)
+
+Here, we use all years in the loop, instead of the years where all countries report CL (2010-2019).
+
+```{r}
+#################################################################
+##                    for loop for CL model                    ##
+#################################################################
+
+# create empty out of bag metric output data frame
+ml_oob_out <- data.frame(matrix(vector(), 0, 9,
+                                dimnames=list(c(), c("auc", "sens", "spec", "oob", "Type", "spatial_fold", "temporal_fold", "mtry", "nodesize"))), 
+                         stringsAsFactors=F, row.names=NULL)
+# create empty in bag metric output data frame
+ml_oob_in <- data.frame(matrix(vector(), 0, 9,
+                               dimnames=list(c(), c("auc", "sens", "spec", "oob", "Type", "spatial_fold", "temporal_fold", "mtry", "nodesize"))), 
+                        stringsAsFactors=F, row.names=NULL)
+
+# create formula
+predictor_names <- data_v2_splits %>% 
+  select(Country, Population, LST_Day, #LST_Night, 
+         HNTL, Precip, NDVI, SWOccurrence,
+         forest_density, forest_fragmentation,
+         land_use_change, edge_loss, Evap_tavg, 
+         Qair_f_tavg, SoilMoi00_10cm_tavg,
+         SoilTemp00_10cm_tavg, Wind_f_tavg, long, lat) %>% 
+  names()
+
+data <- data_v2_splits %>% 
+  select(Code, Year, Name, CL, fold, predictor_names)
+
+
+ml_formula <- as.formula(paste0("CL ~ ", paste(predictor_names, collapse="+")))
+
+
+##################################################################
+##           TODO: switch train and testing != and ==           ##
+##################################################################
+
+# temporal for loop
+for(j in data$Year %>% unique() %>% sort()) { 
+  
+  oob_out_cv <- data.frame(matrix(vector(),0, 9,
+                                  dimnames=list(c(), c("auc", "sens", "spec", "oob", 
+                                                       "Type", "spatial_fold", "temporal_fold",
+                                                       "mtry", "nodesize"))), 
+                           stringsAsFactors=F, row.names=NULL)
+  
+  oob_in_cv <- data.frame(matrix(vector(),0, 9,
+                                 dimnames=list(c(), c("auc", "sens", "spec", "oob", 
+                                                      "Type", "spatial_fold", "temporal_fold", 
+                                                      "mtry", "nodesize"))), 
+                          stringsAsFactors=F, row.names=NULL)
+  
+  for(i in data$fold %>% unique() %>% sort()) {
+    print(paste0(i, "_", j))
+    set.seed(i*777) 
+    datrain <- data %>% 
+      filter(fold != i,
+             Year != j) %>% 
+      as.data.frame()
+    datest <- data %>% 
+      filter(fold == i,
+             Year == j) %>% 
+      as.data.frame()
+    
+    # if(nrow(datrain) < 76){next}
+    
+    o <- tune(ml_formula, data = datrain, rfq = TRUE) # uses (minimizes?) out of bag error
+    
+    # train model
+    rf0_imb_rfq=imbalanced(ml_formula, 
+                           ntree=500, # increase ntree to 3000
+                           data=datrain,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]),
+                           method = "rfq",
+                           do.trace=T, 
+                           importance="random", 
+                           statistics = T)
+    
+    # save model
+    saveRDS(rf0_imb_rfq, 
+            file = paste0("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/1/models/", i, "_", j, ".rds"))
+    
+    # calculate out of sample model performance and save in dataframe
+    oob_out_0 <- predict(rf0_imb_rfq, newdata=datest)
+    auc_out <- pROC::roc(response = oob_out_0$yvar, predictor= oob_out_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_out <- pROC::coords(auc_out, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_out_0$yvar==1,
+                                              1,
+                                              0)),
+                                 ifelse(oob_out_0$predicted[,2]>=best_threshold_out[1,1],
+                                        1,
+                                        0))
+    colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_out <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_out <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    out_error <- data.frame(Type = 'CL', oob = oob_out_0$err.rate[500,1], 
+                            sens = sensitivity_out,
+                            spec = specificity_out,
+                            auc = auc_out$auc,
+                            spatial_fold = i,
+                            temporal_fold = j,
+                            mtry = as.numeric(o$optimal[2]),
+                            nodesize = as.numeric(o$optimal[1]))
+    oob_out_cv <- rbind(oob_out_cv, out_error)
+    
+    # in sample model performance, this is redundant across iterations with the exception of the different random seed number
+    # it shouldn't be since there are different mtry and nodesize
+    # in_sample_test <- imbalanced(ml_formula, 
+    #                              ntree=500, 
+    #                              data=data,
+    #                              mtry = as.numeric(o$optimal[2]),
+    #                              nodesize = as.numeric(o$optimal[1]),
+    #                              method = "rfq",
+    #                              do.trace=T, 
+    #                              importance="random", 
+    #                              statistics = T)
+    
+    # save dataframe
+    oob_in_0 <- predict(rf0_imb_rfq, newdata=data)
+    auc_in <- pROC::roc(response = oob_in_0$yvar, predictor= oob_in_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_in <- pROC::coords(auc_in, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_in_0$yvar==1,1,0)),ifelse(oob_in_0$predicted[,2]>=best_threshold_in[1,1],1,0)); colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_in <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_in <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    in_error <- data.frame(Type = 'CL', oob = oob_in_0$err.rate[500,1],
+                           sens = sensitivity_in,
+                           spec = specificity_in,
+                           auc = auc_in$auc,
+                           spatial_fold = i,
+                           temporal_fold = j,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]))
+    oob_in_cv <- rbind(oob_in_cv, in_error)
+  }
+  ## bind data across folds
+  ml_oob_out <- rbind(ml_oob_out, oob_out_cv)
+  ml_oob_in <- rbind(ml_oob_in, oob_in_cv)
+}
+
+saveRDS(ml_oob_out, "~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/1/ml_oob_out.rds")
+saveRDS(ml_oob_in, "~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/1/ml_oob_in.rds")
+```
+
+We had to stop here at 2018 since there is no land-use data for these years with the given data set. Once LandscapeMetrics_v4 finishes its job, we'll have 2018-2020 data.
+
+
+### View model performances
+
+```{r}
+ml_oob_out
+ml_oob_in
+```
+
+
+### View individual models
+
+
+```{r}
+models <- list.files("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/1/models")
+data_v2_splits <- readRDS("~/peregrine_amazon/Restructured021623/binary_classification/data/data_v2_splits.rds")
+
+model_reader <- function(file){
+  j <- substr(file, 3, 6) %>% 
+    as.integer()
+  i <- substr(file, 1, 1) %>% 
+    as.integer()
+  
+  model <- readRDS(paste0("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/1/models/", file))
+  
+  
+  predictor_names <- data_v2_splits %>% 
+    select(Country, Population, LST_Day, #LST_Night, 
+           HNTL, Precip, NDVI, SWOccurrence,
+           forest_density, forest_fragmentation,
+           land_use_change, edge_loss, Evap_tavg, 
+           Qair_f_tavg, SoilMoi00_10cm_tavg,
+           SoilTemp00_10cm_tavg, Wind_f_tavg, long, lat) %>% 
+    names()
+  
+  data <- data_v2_splits %>% 
+    select(Code, Year, Name, CL, fold, predictor_names)
+  
+  datrain <- data %>% 
+    filter(fold != i,
+           Year != j) %>% 
+  as.data.frame()
+  
+  datest <- data %>% 
+    filter(fold == i,
+           Year == j) %>% 
+    as.data.frame()
+  
+  # calculate out of sample model performance
+    oob_out <- predict(model, newdata=datest)
+  # calculate in sample model performance
+    oob_in <- predict(model, newdata=data)
+    
+    imp_df <- model_2$model$importance %>% 
+      as.data.frame() %>% 
+      mutate(var = row.names(.)) %>% 
+      rename(importance = all) %>% 
+      mutate(var = fct_reorder(var, importance)) %>% 
+      select(var, importance) %>% 
+      data.frame(row.names = NULL) 
+    
+    imp_plot <- ggplot(imp_df) +
+      geom_col(aes(x = importance,
+                   y = var))
+    
+    
+    
+    res <- list(
+      model = model,
+      oob_out = oob_out,
+      oob_in = oob_in,
+      imp_plot = imp_plot,
+      year = j,
+      fold = i
+    )
+    
+    return(res)
+}
+```
+
+```{r}
+model_2 <- model_reader(models[2])
+
+model_2$imp_plot %>% 
+  ggplotly()
+
+model_2$oob_out
+
+model_3 <- model_reader(models[3])
+```
+
+
+### Iter 2 (ntree = 3000)
+
+```{r}
+data_v2_splits <- readRDS("~/peregrine_amazon/Restructured021623/binary_classification/data/data_v2_splits.rds")
+iter = 2
+
+
+#################################################################
+##                    for loop for CL model                    ##
+#################################################################
+
+# create empty out of bag metric output data frame
+ml_oob_out <- data.frame(matrix(vector(), 0, 9,
+                                dimnames=list(c(), c("auc", "sens", "spec", "oob", "Type", "spatial_fold", "temporal_fold", "mtry", "nodesize"))), 
+                         stringsAsFactors=F, row.names=NULL)
+# create empty in bag metric output data frame
+ml_oob_in <- data.frame(matrix(vector(), 0, 9,
+                               dimnames=list(c(), c("auc", "sens", "spec", "oob", "Type", "spatial_fold", "temporal_fold", "mtry", "nodesize"))), 
+                        stringsAsFactors=F, row.names=NULL)
+
+# create formula
+predictor_names <- data_v2_splits %>% 
+  select(Country, Population, LST_Day, #LST_Night, 
+         HNTL, Precip, NDVI, SWOccurrence,
+         forest_density, forest_fragmentation,
+         land_use_change, edge_loss, Evap_tavg, 
+         Qair_f_tavg, SoilMoi00_10cm_tavg,
+         SoilTemp00_10cm_tavg, Wind_f_tavg, long, lat) %>% 
+  names()
+
+data <- data_v2_splits %>% 
+  select(Code, Year, Name, CL, fold, predictor_names)
+
+
+ml_formula <- as.formula(paste0("CL ~ ", paste(predictor_names, collapse="+")))
+
+ij_function <- function(i){
+    print(paste0(i, "_", j))
+    set.seed(i*777) 
+    datrain <- data %>% 
+      filter(fold != i,
+             Year != j) %>% 
+      as.data.frame()
+    datest <- data %>% 
+      filter(fold == i,
+             Year == j) %>% 
+      as.data.frame()
+    
+    # if(nrow(datrain) < 76){next}
+    
+    o <- tune(ml_formula, data = datrain, rfq = TRUE) # uses (minimizes?) out of bag error
+    
+    # train model
+    rf0_imb_rfq=imbalanced(ml_formula, 
+                           ntree=3000, # increase ntree to 3000
+                           data=datrain,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]),
+                           method = "rfq",
+                           do.trace=T, 
+                           importance="random", 
+                           statistics = T)
+    
+    # save model
+    saveRDS(rf0_imb_rfq, 
+            file = paste0("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/models/", i, "_", j, ".rds"))
+    
+    # calculate out of sample model performance and save in dataframe
+    oob_out_0 <- predict(rf0_imb_rfq, newdata=datest)
+    auc_out <- pROC::roc(response = oob_out_0$yvar, predictor= oob_out_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_out <- pROC::coords(auc_out, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_out_0$yvar==1,
+                                              1,
+                                              0)),
+                                 ifelse(oob_out_0$predicted[,2]>=best_threshold_out[1,1],
+                                        1,
+                                        0))
+    colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_out <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_out <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    out_error <- data.frame(Type = 'CL', oob = oob_out_0$err.rate[500,1], 
+                            sens = sensitivity_out,
+                            spec = specificity_out,
+                            auc = auc_out$auc,
+                            spatial_fold = i,
+                            temporal_fold = j,
+                            mtry = as.numeric(o$optimal[2]),
+                            nodesize = as.numeric(o$optimal[1]))
+    oob_out_cv <- rbind(oob_out_cv, out_error)
+    
+    # in sample model performance, this is redundant across iterations with the exception of the different random seed number
+    # it shouldn't be since there are different mtry and nodesize
+    # in_sample_test <- imbalanced(ml_formula, 
+    #                              ntree=500, 
+    #                              data=data,
+    #                              mtry = as.numeric(o$optimal[2]),
+    #                              nodesize = as.numeric(o$optimal[1]),
+    #                              method = "rfq",
+    #                              do.trace=T, 
+    #                              importance="random", 
+    #                              statistics = T)
+    
+    # save dataframe
+    oob_in_0 <- predict(rf0_imb_rfq, newdata=data)
+    auc_in <- pROC::roc(response = oob_in_0$yvar, predictor= oob_in_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_in <- pROC::coords(auc_in, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_in_0$yvar==1,1,0)),ifelse(oob_in_0$predicted[,2]>=best_threshold_in[1,1],1,0)); colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_in <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_in <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    in_error <- data.frame(Type = 'CL', oob = oob_in_0$err.rate[500,1],
+                           sens = sensitivity_in,
+                           spec = specificity_in,
+                           auc = auc_in$auc,
+                           spatial_fold = i,
+                           temporal_fold = j,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]))
+    oob_in_cv <- rbind(oob_in_cv, in_error)
+}
+
+
+##################################################################
+##           TODO: switch train and testing != and ==           ##
+##################################################################
+
+# temporal for loop
+for(j in data$Year %>% unique() %>% sort()) { 
+  
+  oob_out_cv <- data.frame(matrix(vector(),0, 9,
+                                  dimnames=list(c(), c("auc", "sens", "spec", "oob", 
+                                                       "Type", "spatial_fold", "temporal_fold",
+                                                       "mtry", "nodesize"))), 
+                           stringsAsFactors=F, row.names=NULL)
+  
+  oob_in_cv <- data.frame(matrix(vector(),0, 9,
+                                 dimnames=list(c(), c("auc", "sens", "spec", "oob", 
+                                                      "Type", "spatial_fold", "temporal_fold", 
+                                                      "mtry", "nodesize"))), 
+                          stringsAsFactors=F, row.names=NULL)
+  
+  registerDoParallel(cores = detectCores() - 2)
+  
+  lapply(data$fold %>% unique() %>% sort(), function(i){
+    print(paste0(i, "_", j))
+    set.seed(i*777) 
+    datrain <- data %>% 
+      filter(fold != i,
+             Year != j) %>% 
+      as.data.frame()
+    datest <- data %>% 
+      filter(fold == i,
+             Year == j) %>% 
+      as.data.frame()
+    
+    # if(nrow(datrain) < 76){next}
+    
+    o <- tune(ml_formula, data = datrain, rfq = TRUE) # uses (minimizes?) out of bag error
+    
+    # train model
+    rf0_imb_rfq=imbalanced(ml_formula, 
+                           ntree=3000, # increase ntree to 3000
+                           data=datrain,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]),
+                           method = "rfq",
+                           do.trace=T, 
+                           importance="random", 
+                           statistics = T)
+    
+    # save model
+    saveRDS(rf0_imb_rfq, 
+            file = paste0("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/models/", i, "_", j, ".rds"))
+    
+    # calculate out of sample model performance and save in dataframe
+    oob_out_0 <- predict(rf0_imb_rfq, newdata=datest)
+    auc_out <- pROC::roc(response = oob_out_0$yvar, predictor= oob_out_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_out <- pROC::coords(auc_out, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_out_0$yvar==1,
+                                              1,
+                                              0)),
+                                 ifelse(oob_out_0$predicted[,2]>=best_threshold_out[1,1],
+                                        1,
+                                        0))
+    colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_out <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_out <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    out_error <- data.frame(Type = 'CL', oob = oob_out_0$err.rate[500,1], 
+                            sens = sensitivity_out,
+                            spec = specificity_out,
+                            auc = auc_out$auc,
+                            spatial_fold = i,
+                            temporal_fold = j,
+                            mtry = as.numeric(o$optimal[2]),
+                            nodesize = as.numeric(o$optimal[1]))
+    oob_out_cv <- rbind(oob_out_cv, out_error)
+    
+    # in sample model performance, this is redundant across iterations with the exception of the different random seed number
+    # it shouldn't be since there are different mtry and nodesize
+    # in_sample_test <- imbalanced(ml_formula, 
+    #                              ntree=500, 
+    #                              data=data,
+    #                              mtry = as.numeric(o$optimal[2]),
+    #                              nodesize = as.numeric(o$optimal[1]),
+    #                              method = "rfq",
+    #                              do.trace=T, 
+    #                              importance="random", 
+    #                              statistics = T)
+    
+    # save dataframe
+    oob_in_0 <- predict(rf0_imb_rfq, newdata=data)
+    auc_in <- pROC::roc(response = oob_in_0$yvar, predictor= oob_in_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_in <- pROC::coords(auc_in, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_in_0$yvar==1,1,0)),ifelse(oob_in_0$predicted[,2]>=best_threshold_in[1,1],1,0)); colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_in <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_in <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    in_error <- data.frame(Type = 'CL', oob = oob_in_0$err.rate[500,1],
+                           sens = sensitivity_in,
+                           spec = specificity_in,
+                           auc = auc_in$auc,
+                           spatial_fold = i,
+                           temporal_fold = j,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]))
+    oob_in_cv <- rbind(oob_in_cv, in_error)
+})
+  
+  stopImplicitCluster()
+  ## bind data across folds
+  ml_oob_out <- rbind(ml_oob_out, oob_out_cv)
+  ml_oob_in <- rbind(ml_oob_in, oob_in_cv)
+}
+
+saveRDS(ml_oob_out, "~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/ml_oob_out.rds")
+saveRDS(ml_oob_in, "~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/ml_oob_in.rds")
+```
+
+
+```{r}
+data_v2_splits <- readRDS("~/peregrine_amazon/Restructured021623/binary_classification/data/data_v2_splits.rds") 
+
+data_v2_splits_dict <- data_v2_splits %>% 
+  select(Code, fold) %>% 
+  mutate(Code = Code %>% as.integer())
+
+aad_2021 <- readRDS("~/peregrine_amazon/data/annual/aad_2021.rds") %>% 
+  innerjoin(data_v2_splits_dict, by = c("Code"))
+```
+
+
+### Iter 3 (ntree = 3000)
+
+```{r}
+iter = 1
+
+data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>% 
+  mutate(CL = ifelse(CL > 0, 1, 0) %>% 
+           as.factor()) %>% 
+  filter(!is.na(CL),
+         !is.na(forest_density))
+
+
+#################################################################
+##                    for loop for CL model                    ##
+#################################################################
+
+# create empty out of bag metric output data frame
+ml_oob_out <- data.frame(matrix(vector(), 0, 9,
+                                dimnames=list(c(), c("auc", "sens", "spec", "oob", "Type", "spatial_fold", "temporal_fold", "mtry", "nodesize"))), 
+                         stringsAsFactors=F, row.names=NULL)
+# create empty in bag metric output data frame
+ml_oob_in <- data.frame(matrix(vector(), 0, 9,
+                               dimnames=list(c(), c("auc", "sens", "spec", "oob", "Type", "spatial_fold", "temporal_fold", "mtry", "nodesize"))), 
+                        stringsAsFactors=F, row.names=NULL)
+
+# create formula
+predictor_names <- data %>% 
+  select(Country, Population, 
+         LST_Day, min_LST_Day, max_LST_Day,
+         HNTL, Precip, # min_Precip, max_Precip, min_Precip_Month, max_Precip_Month,
+         NDVI, SWOccurrence,
+         forest_density, forest_fragmentation,
+         land_use_change, edge_loss, Evap_tavg, 
+         Qair_f_tavg, SoilMoi00_10cm_tavg,
+         SoilTemp00_10cm_tavg, Wind_f_tavg, long, lat) %>% 
+  names()
+
+data <- data %>% 
+  select(Code, Year, Name, CL, fold, predictor_names)
+
+
+ml_formula <- as.formula(paste0("CL ~ ", paste(predictor_names, collapse="+")))
+
+ij_function <- function(i){
+    print(paste0(i, "_", j))
+    set.seed(i*777) 
+    datrain <- data %>% 
+      filter(fold != i,
+             Year != j) %>% 
+      as.data.frame()
+    datest <- data %>% 
+      filter(fold == i,
+             Year == j) %>% 
+      as.data.frame()
+    
+    # if(nrow(datrain) < 76){next}
+    
+    o <- tune(ml_formula, data = datrain, rfq = TRUE) # uses (minimizes?) out of bag error
+    
+    # train model
+    rf0_imb_rfq=imbalanced(ml_formula, 
+                           ntree=3000, # increase ntree to 3000
+                           data=datrain,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]),
+                           method = "rfq",
+                           do.trace=T, 
+                           importance="random", 
+                           statistics = T)
+    
+    # save model
+    saveRDS(rf0_imb_rfq, 
+            file = paste0("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/models/", i, "_", j, ".rds"))
+    
+    # calculate out of sample model performance and save in dataframe
+    oob_out_0 <- predict(rf0_imb_rfq, newdata=datest)
+    auc_out <- pROC::roc(response = oob_out_0$yvar, predictor= oob_out_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_out <- pROC::coords(auc_out, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_out_0$yvar==1,
+                                              1,
+                                              0)),
+                                 ifelse(oob_out_0$predicted[,2]>=best_threshold_out[1,1],
+                                        1,
+                                        0))
+    colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_out <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_out <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    out_error <- data.frame(Type = 'CL', oob = oob_out_0$err.rate[500,1], 
+                            sens = sensitivity_out,
+                            spec = specificity_out,
+                            auc = auc_out$auc,
+                            spatial_fold = i,
+                            temporal_fold = j,
+                            mtry = as.numeric(o$optimal[2]),
+                            nodesize = as.numeric(o$optimal[1]))
+    oob_out_cv <- rbind(oob_out_cv, out_error)
+    
+    # in sample model performance, this is redundant across iterations with the exception of the different random seed number
+    # it shouldn't be since there are different mtry and nodesize
+    # in_sample_test <- imbalanced(ml_formula, 
+    #                              ntree=500, 
+    #                              data=data,
+    #                              mtry = as.numeric(o$optimal[2]),
+    #                              nodesize = as.numeric(o$optimal[1]),
+    #                              method = "rfq",
+    #                              do.trace=T, 
+    #                              importance="random", 
+    #                              statistics = T)
+    
+    # save dataframe
+    oob_in_0 <- stats::predict(rf0_imb_rfq, newdata=data)
+    auc_in <- pROC::roc(response = oob_in_0$yvar, predictor= oob_in_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_in <- pROC::coords(auc_in, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_in_0$yvar==1,1,0)),ifelse(oob_in_0$predicted[,2]>=best_threshold_in[1,1],1,0)); colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_in <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_in <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    in_error <- data.frame(Type = 'CL', oob = oob_in_0$err.rate[500,1],
+                           sens = sensitivity_in,
+                           spec = specificity_in,
+                           auc = auc_in$auc,
+                           spatial_fold = i,
+                           temporal_fold = j,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]))
+    oob_in_cv <- rbind(oob_in_cv, in_error)
+}
+
+
+##################################################################
+##           TODO: switch train and testing != and ==           ##
+##################################################################
+
+# temporal for loop
+for(j in data$Year %>% unique() %>% sort()) { 
+  
+  oob_out_cv <- data.frame(matrix(vector(),0, 9,
+                                  dimnames=list(c(), c("auc", "sens", "spec", "oob", 
+                                                       "Type", "spatial_fold", "temporal_fold",
+                                                       "mtry", "nodesize"))), 
+                           stringsAsFactors=F, row.names=NULL)
+  
+  oob_in_cv <- data.frame(matrix(vector(),0, 9,
+                                 dimnames=list(c(), c("auc", "sens", "spec", "oob", 
+                                                      "Type", "spatial_fold", "temporal_fold", 
+                                                      "mtry", "nodesize"))), 
+                          stringsAsFactors=F, row.names=NULL)
+  
+  # registerDoParallel(cores = detectCores() - 2)
+  
+  for(i in data$fold %>% unique() %>% sort()){
+    print(paste0(i, "_", j))
+    set.seed(i*777) 
+    datrain <- data %>% 
+      filter(fold != i,
+             Year != j) %>% 
+      as.data.frame()
+    datest <- data %>% 
+      filter(fold == i,
+             Year == j) %>% 
+      as.data.frame()
+    
+    # if(nrow(datrain) < 76){next}
+    
+    o <- tune(ml_formula, data = datrain, rfq = TRUE) # uses (minimizes?) out of bag error
+    
+    # train model
+    rf0_imb_rfq=imbalanced(ml_formula, 
+                           ntree=3000, # increase ntree to 3000
+                           data=datrain,
+                           mtry = as.numeric(o$optimal[2]),
+                           nodesize = as.numeric(o$optimal[1]),
+                           method = "rfq",
+                           do.trace=T, 
+                           importance="random", 
+                           statistics = T)
+    
+    # save model
+    saveRDS(rf0_imb_rfq, 
+            file = paste0("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/models/", i, "_", j, ".rds"))
+    
+    # calculate out of sample model performance and save in dataframe
+    oob_out_0 <- predict(rf0_imb_rfq, newdata=datest)
+    auc_out <- pROC::roc(response = oob_out_0$yvar, predictor= oob_out_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    best_threshold_out <- pROC::coords(auc_out, "best", ret = "threshold")
+    metrica.format <- data.frame(cbind(ifelse(oob_out_0$yvar==1,
+                                              1,
+                                              0)),
+                                 ifelse(oob_out_0$predicted[,2]>=best_threshold_out[1,1],
+                                        1,
+                                        0))
+    colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    metrica.format <- metrica.format %>% 
+      table()
+    sensitivity_out <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    specificity_out <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    out_error <- data.frame(Type = 'CL', oob = oob_out_0$err.rate[500,1], 
+                            sens = sensitivity_out,
+                            spec = specificity_out,
+                            auc = auc_out$auc,
+                            spatial_fold = i,
+                            temporal_fold = j,
+                            mtry = as.numeric(o$optimal[2]),
+                            nodesize = as.numeric(o$optimal[1]))
+    oob_out_cv <- rbind(oob_out_cv, out_error)
+    
+    # in sample model performance, this is redundant across iterations with the exception of the different random seed number
+    # it shouldn't be since there are different mtry and nodesize
+    # in_sample_test <- imbalanced(ml_formula, 
+    #                              ntree=500, 
+    #                              data=data,
+    #                              mtry = as.numeric(o$optimal[2]),
+    #                              nodesize = as.numeric(o$optimal[1]),
+    #                              method = "rfq",
+    #                              do.trace=T, 
+    #                              importance="random", 
+    #                              statistics = T)
+    
+    # save dataframe
+    # oob_in_0 <- predict(rf0_imb_rfq, newdata=data)
+    # auc_in <- pROC::roc(response = oob_in_0$yvar, predictor= oob_in_0$predicted[,2], levels=c(0,1), auc = TRUE)
+    # best_threshold_in <- pROC::coords(auc_in, "best", ret = "threshold")
+    # metrica.format <- data.frame(cbind(ifelse(oob_in_0$yvar==1,1,0)),ifelse(oob_in_0$predicted[,2]>=best_threshold_in[1,1],1,0)); colnames(metrica.format) <- c("labels","predictions"); rownames(metrica.format) <- 1:dim(metrica.format)[1]
+    # metrica.format <- metrica.format %>% 
+    #   table()
+    # sensitivity_in <- recall(data = metrica.format, relevant = rownames(metrica.format)[1]) 
+    # specificity_in <- precision(data = metrica.format, relevant = rownames(metrica.format)[1])
+    # in_error <- data.frame(Type = 'CL', oob = oob_in_0$err.rate[500,1],
+    #                        sens = sensitivity_in,
+    #                        spec = specificity_in,
+    #                        auc = auc_in$auc,
+    #                        spatial_fold = i,
+    #                        temporal_fold = j,
+    #                        mtry = as.numeric(o$optimal[2]),
+    #                        nodesize = as.numeric(o$optimal[1]))
+    # oob_in_cv <- rbind(oob_in_cv, in_error)
+  }
+  ## bind data across folds
+  ml_oob_out <- rbind(ml_oob_out, oob_out_cv)
+  # ml_oob_in <- rbind(ml_oob_in, oob_in_cv)
+}
+
+
+saveRDS(ml_oob_out, "~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/ml_oob_out.rds")
+# saveRDS(ml_oob_in, "~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/", iter, "/ml_oob_in.rds")
+```
