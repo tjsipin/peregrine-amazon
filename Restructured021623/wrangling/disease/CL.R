@@ -10,9 +10,10 @@ library(stringr)
 
 # existing data
 aad <- readRDS("~/peregrine_amazon/Restructured021623/data/annual/incidence") %>%
-  select(-c(Chikungunya, Dengue:Zika, OptTemp_Obs:Malaria_OptTemp)) %>%
-  select(Code, Year, Country, Name, has_CL, Cutaneous.Leishmaniasis, everything())
+  select(-c(Chikungunya, Dengue:Zika, OptTemp_Obs:Malaria_OptTemp)) %>% # not interested in these diseases for this project
+  select(Code, Year, Country, Name, has_CL, Cutaneous.Leishmaniasis, everything()) # reorder variables
 
+# read in old data for referencing
 old_aad <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv")
 
 ##################################################################
@@ -38,7 +39,7 @@ brazil_c_leish_cleaner_func <- function(data, year){
 
 
 }
-years <- 2007:2021
+years <- 2007:2021 # CL reporting only available for these years
 brazil_cutleish_df <- data.frame()
 
 for (year in years){
@@ -60,19 +61,6 @@ brazil_names <- aad %>%
 brazil_population_v2 <- brazil_population %>%
   full_join(aad %>% select(Name, Code), by = "Code")
 
-# brazil_cutleish_df_yearly <- brazil_cutleish_df %>%
-#   group_by(Code, Muni_Name, Year) %>%
-#   summarise(Cases = sum(Cases)) %>%
-#   ungroup() %>%
-#   rename(Name = Muni_Name) %>%
-#   filter(Code %in% intersect(aad$Code, Code)) %>%
-#   full_join(aad %>% select(Code, Country) %>% mutate(Code = as.character(Code)), by = "Code") %>%
-#   full_join(brazil_population_v2, by = c("Name", "Year")) %>%
-#   mutate(CL = Cases / Population * 1000,
-#          Country.x = as.factor(Country.x),
-#          Country.y = as.factor(Country.y)) %>%
-#   select(-Cases)
-
 brazil_cutleish_df_yearly <- brazil_cutleish_df %>%
   group_by(Code, Muni_Name, Year) %>%
   summarise(Cases = sum(Cases)) %>%
@@ -88,15 +76,14 @@ brazil_cutleish_df_yearly <- brazil_cutleish_df %>%
 ## Ready to merge with all other countries ^^
 
 
-
-
-
 ##################################################################
 ##                             Peru                             ##
 ##################################################################
 
+# read in raw CL data for Peru
 peru_raw <- read.csv("~/peregrine_amazon/data/peru/disease/Cut_Leish_all_2016_2022_v2.csv", encoding = 'latin1')
 
+# select columns of interest
 peru_selected <- peru_raw[, c(3, 4, 8, 10, 11, 12, 13)]
 
 peru_selected_v2 <- peru_selected %>%

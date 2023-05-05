@@ -166,7 +166,7 @@ cleanCSVfunc_colombia_toRDS <- function(file_name){ # save space
       cleaned %>%
         group_by(Year, MuniCode, Country) %>%
         dplyr::select(-Month) %>%
-        summarise_all(mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
+        mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
         ungroup()
     }
 
@@ -554,7 +554,7 @@ aad_v2 <- colombia_combined %>%
   select(-Name)
 
 # saveRDS(aad_v2, "~/peregrine_amazon/data/wrangling/aad_v2.rds")
-# aad_v2 <- readRDS("~/peregrine_amazon/data/wrangling/aad_v2.rds")
+aad_v2 <- readRDS("~/peregrine_amazon/data/wrangling/aad_v2.rds")
 
 ##         ##
 ## Disease ##
@@ -604,12 +604,12 @@ all_precip_super <- brazil_precip_super %>%
   rbind(colombia_precip_super) %>%
   rbind(peru_precip_super) %>%
   group_by(Year, MuniCode, Country) %>%
-  filter(Precip == max(Precip) | Precip == min(Precip)) %>%
+  filter(Precip == max(Precip) | Precip == min(Precip)) %>% # only select rows (months) with precipitation either at its highest or lowest
   arrange(Precip, .by_group = T) %>%
   summarise(min_Precip = min(Precip),
             max_Precip = max(Precip),
-            min_Precip_Month = Month[1],
-            max_Precip_Month = Month[2]) %>%
+            min_Precip_Month = Month[1], # get month of min precip
+            max_Precip_Month = Month[2]) %>% # get month of max precip
   ungroup() %>%
   rename(Code = MuniCode)
 
@@ -618,8 +618,6 @@ all_precip_super <- brazil_precip_super %>%
 # Standing water occurrence
 SWO <- read.csv("~/peregrine_amazon/data/SWOccurrence/SWOccurrence.csv") %>%
   select(-c(system.index, .geo, max_extent, transition))
-
-#
 
 # create names dictionary
 aad_names <- aad %>%
@@ -646,6 +644,14 @@ LandscapeMetrics_v4_adjacency_matrix <- read.csv("~/peregrine_amazon/data/wrangl
 SWO <- read.csv("~/peregrine_amazon/data/SWOccurrence/SWOccurrence.csv") %>%
   select(-c(system.index, .geo, max_extent, transition))
 
+# Elevation
+Elevation <- read.csv("~/peregrine_amazon_nogit/data/Elevation/Elevation.csv") %>%
+  select(-c(system.index, .geo)) %>%
+  rename(max_Elevation = max,
+         min_Elevation = min,
+         mean_Elevation = mean,
+         var_Elevation = variance)
+
 aad_v3 <- aad_v2 %>%
   right_join(aad_names, by = c("Code", "Country")) %>% # join with names dictionary, keeping only rows from dictionary
   left_join(HNTL, by = c("Code" = "MuniCode", "Year")) %>% # join with HNTL
@@ -653,18 +659,14 @@ aad_v3 <- aad_v2 %>%
   full_join(all_precip_super, by = c("Code", "Year", "Country")) %>%
   full_join(LandscapeMetrics_v4_classmetrics, by = c("Code"="Muni_ID", "Country", "Year")) %>% # merge with LandscapeMetrics_v4 dfs
   full_join(LandscapeMetrics_v4_adjacency_matrix, by = c("Code"="Muni_ID", "Country", "Year")) %>%
-  full_join(SWO, by=c('Code'='MuniCode')) %>%
+  left_join(SWO, by=c('Code'='MuniCode')) %>%
+  left_join(Elevation, by=c("Code"="MuniCode")) %>%
   mutate(Code = as.integer(Code)) %>%
   rename(SWOccurrence = occurrence,
          SWSeasonality = seasonality,
          SWRecurrence = recurrence,
          SWChange_abs = change_abs,
          SWChange_norm = change_norm) %>%
-  # group_by(Code, Name, Country) %>%
-  # fill(CL, .direction = 'up') %>%
-  # unique() %>%
-  # ungroup() %>%
-  # mutate(CL = ifelse(!is.na(CL), CL, Cutaneous.Leishmaniasis)) %>%
   select(Code, Name, Country, Year, CL, NDVI, EVI,
          LST_Day, min_LST_Day, max_LST_Day,
          LST_Night, min_LST_Night, max_LST_Night,
