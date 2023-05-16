@@ -158,9 +158,6 @@ colombia_cutleish_df_yearly <- full_colombia_annual %>%
   mutate(CL = CL_cases/Population * 1000) %>% # fits aad
   select(-CL_cases)
 
-
-
-
 ##################################################################
 ##                      Bring all together                      ##
 ##################################################################
