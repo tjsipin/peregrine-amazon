@@ -33,7 +33,8 @@ data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>%
   mutate(across(contains('pland'), ~ case_when(.x > 0 ~ 1,
                                                .x == 0 ~ 0)),
          CL = case_when(CL == 0 ~ 0,
-                        CL > 0 ~ 1) %>% as.factor())
+                        CL > 0 ~ 1) %>% as.factor()) %>% 
+  select(-Malaria)
 
 data %>% select(Code, Year, Country, contains('pland')) %>% 
   summary()
@@ -43,19 +44,6 @@ data %>% select(Code, Year, Country, contains('forest')) %>%
 
 
 ```
-
-The data is a stand-in for the data that is currently processing. As of March 10, 2023:
-
-- The complete 2020 data is processing for disease and environmental variables 
-- The updated Colombia environmental variables are also still processing, particularly the Precip data as it hasn't been scaling correctly
-
-Update: March 23, 2023:
-
-- All variables except for landscape metrics are up-to-date (2021)
-- Disease not yet merged, but we have
-
-Update: March 28, 2023
-- Disease merged
 
 
 ## Random Forest with all variables
@@ -94,10 +82,15 @@ We have 485 total predictors. We want that number to be reduced down to maybe 10
 
 #### The model
 
+The following code chunk is ran in the Anvil HPC box due to high computational power requirements.
+
 ```{r}
 t0 <- Sys.time()
 full.o <- tune(full.formula, data = full.training, rfq = TRUE) # uses (minimizes?) out of bag error
 Sys.time() - t0 # 38 seconds
+
+# saveRDS(full.o, "~/peregrine_amazon/Restructured021623/EDA/variable_selection/RF/full/full.o.rds")
+full.o <- readRDS("~/peregrine_amazon/Restructured021623/EDA/variable_selection/RF/full/full.o.rds")
 
 t0 <- Sys.time()
 # train model
@@ -114,7 +107,15 @@ full.rf0_imb_rfq=imbalanced(
   forest=T
 )
 Sys.time() - t0 # 90 seconds
+
+# saveRDS(full.rf0_imb_rfq, "~/peregrine_amazon/Restructured021623/EDA/variable_selection/RF/full/full.rf0_imb_rfq.rds")
+full.rf0_imb_rfq <- readRDS("~/peregrine_amazon/Restructured021623/EDA/variable_selection/RF/full/full.rf0_imb_rfq.rds")
 ```
+
+```{r}
+full.rf0_imb_rfq
+```
+
 
 ```{r}
 full.pred_train <- predict(full.rf0_imb_rfq, full.training)
@@ -130,11 +131,75 @@ full.pred_test <- predict(full.rf0_imb_rfq, full.testing)
 These results are incredible. We have AUC values of over 90% on both the training and testing data. We investigate which variables are important.
 
 ```{r}
-full.vimp <- vimp(full.rf0_imb_rfq)
-print(full.vimp$importance)
-
-full.rf0_imb_rfq$xvar.names
+plot(full.rf0_imb_rfq, m.target='CL', plots.one.page=F)
 ```
+
+```{r}
+full.importance.df <- full.rf0_imb_rfq$importance %>% 
+  as.data.frame() %>% 
+  mutate(name = rownames(full.rf0_imb_rfq$importance)) %>% 
+  select(name, all) %>% 
+  arrange(desc(all)) %>% 
+  mutate(name = factor(name, levels=unique(name))) 
+
+rownames(full.importance.df) <- NULL
+
+full.importance.df %>% 
+  filter(all > 0)
+
+full.importance.df %>% 
+  filter(all == 0)
+
+full.importance.df %>% 
+  filter(all < 0)
+
+saveRDS(full.importance.df, "~/peregrine_amazon/Restructured021623/EDA/variable_selection/RF/full/full.importance.df.rds")
+
+ggplot(full.importance.df %>% 
+         filter(all > quantile(all, 0.9)),
+       aes(x=all, y=name)) +
+  geom_bar(stat='identity')
+```
+
+## Reduced Random Forest (~ 15 variables)
+
+```{r}
+full.15.rf0_imb_rfq <- readRDS("~/peregrine_amazon/Restructured021623/EDA/variable_selection/RF/full/full.15.rf0_imb_rfq.rds")
+```
+
+```{r}
+full.15.pred_train <- predict(full.15.rf0_imb_rfq, full.training)
+```
+
+
+Let's see how this performs on the `full.testing`.
+
+```{r}
+full.15.pred_test <- predict(full.15.rf0_imb_rfq, full.testing)
+```
+
+```{r}
+full.15.importance.df <- full.15.rf0_imb_rfq$importance %>% 
+  as.data.frame() %>% 
+  mutate(name = rownames(full.15.rf0_imb_rfq$importance)) %>% 
+  select(name, all) %>% 
+  arrange(desc(all)) %>% 
+  mutate(name = factor(name, levels=unique(name))) 
+
+rownames(full.15.importance.df) <- NULL
+
+full.15.importance.df %>% 
+  filter(all > 0)
+
+full.15.importance.df %>% 
+  filter(all == 0)
+
+full.15.importance.df %>% 
+  filter(all < 0)
+
+saveRDS(full.15.importance.df, "~/peregrine_amazon/Restructured021623/EDA/variable_selection/RF/full/full.15.importance.df.rds")
+```
+
 
 
 ## Spatiotemporal Random Forest
