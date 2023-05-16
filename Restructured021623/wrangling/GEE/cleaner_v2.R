@@ -166,7 +166,7 @@ cleanCSVfunc_colombia_toRDS <- function(file_name){ # save space
       cleaned %>%
         group_by(Year, MuniCode, Country) %>%
         dplyr::select(-Month) %>%
-        mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
+        summarise_all(mean, na.rm = ifelse(sum(complete.cases(.)) > 10, T, F)) %>%
         ungroup()
     }
 
@@ -369,7 +369,6 @@ for(file in HNTL_IC){
 ## future task might be to filter colombia shapefile starting from GEE
 colombia_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Colombia') %>%
-  filter(!is.na(pland_forest)) %>%
   dplyr::select(Code) %>%
   unique()
 
@@ -416,7 +415,6 @@ full_colombia_env_vars_v2 <- full_colombia_env_vars %>%
 
 peru_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Peru') %>%
-  filter(!is.na(pland_forest)) %>%
   dplyr::select(Code) %>%
   unique()
 
@@ -462,7 +460,6 @@ full_peru_env_vars_v2 <- full_peru_env_vars %>%
 ## future task might be to filter brazil shapefile starting from GEE
 brazil_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Brazil') %>%
-  filter(!is.na(pland_forest)) %>%
   dplyr::select(Code) %>%
   unique()
 
@@ -512,7 +509,7 @@ old_peru <- aad %>%
 
 # Combine Colombia
 colombia_combined <- full_colombia_env_vars_v2 %>%
-  left_join(old_colombia, by = c("Code", "Year", "Country",
+  full_join(old_colombia, by = c("Code", "Year", "Country",
                                  'NDVI', 'EVI',
                                  'StableLights')) %>% # Use fill()
   group_by(Country) %>%
@@ -550,8 +547,7 @@ peru_combined <- full_peru_env_vars_v2 %>%
 
 aad_v2 <- colombia_combined %>%
   rbind(brazil_combined) %>%
-  rbind(peru_combined) %>%
-  select(-Name)
+  rbind(peru_combined)
 
 # saveRDS(aad_v2, "~/peregrine_amazon/data/wrangling/aad_v2.rds")
 aad_v2 <- readRDS("~/peregrine_amazon/data/wrangling/aad_v2.rds")
@@ -560,39 +556,7 @@ aad_v2 <- readRDS("~/peregrine_amazon/data/wrangling/aad_v2.rds")
 ## Disease ##
 ##         ##
 
-# 2001-2006 Brazil
-old_brazil_CL <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
-  filter(Country=='Brazil',
-         !is.na(Cutaneous.Leishmaniasis),
-         Year < 2007) %>%
-  select(Code, CL=Cutaneous.Leishmaniasis, Year)
-
-brazil_incidence <- readRDS("~/peregrine_amazon/data/brazil/disease/use/brazil_CL_incidence_annual.rds") %>% # 2007-2020 Brazil
-  select(-Cases, -Population) %>%
-  filter(!is.na(CL)) %>%
-  rbind(old_brazil_CL)
-
-colombia_incidence <- readRDS("~/peregrine_amazon/data/colombia/disease/use/colombia_CL_incidence_annual.rds") %>%
-  select(-Name, -Country, -Population)
-
-# 2010-2015 Peru
-old_peru_CL <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
-  filter(Country=='Peru',
-         !is.na(Cutaneous.Leishmaniasis),
-         Year < 2016) %>%
-  select(Code, CL=Cutaneous.Leishmaniasis, Year)
-
-peru_incidence <- readRDS("~/peregrine_amazon/data/peru/disease/peru_cutleish_df_annual_2016_2020.rds") %>% # 2016-2020 Peru
-  select(-Country, -Name, -Population) %>%
-  filter(Year >= 2016) %>%
-  rbind(old_peru_CL) %>%
-  filter(Code %in% as.integer(read_sf("~/peregrine_amazon/data/peru/shapefiles/Final_Peru_Amazonian_Municipios_Projected.shp")$IDDIST)) #filter out municipalities not in final munis
-
-all_incidence <- brazil_incidence %>%
-  rbind(colombia_incidence) %>%
-  rbind(peru_incidence)
-
-# saveRDS(all_incidence, "~/peregrine_amazon/data/wrangling/all_incidence.rds")
+disease <- read.csv("~/network-storage/AmazonMalaria/Data/1_DataProcessing/Disease/annual_incidence_wide.csv")
 
 # precipitation superlatives
 brazil_precip_super <- readRDS("~/peregrine_amazon/data/brazil/processed/final/monthly/full_brazil_precip_00_daily_processed_monthly")
@@ -623,16 +587,18 @@ SWO <- read.csv("~/peregrine_amazon/data/SWOccurrence/SWOccurrence.csv") %>%
 aad_names <- aad %>%
   select(Name, Code, Country) %>%
   unique() %>%
-  mutate(Name = str_to_sentence(Name, locale='es'))
+  mutate(Name = str_to_sentence(Name, locale='es')) %>%
+  tibble()
 
 # saveRDS(aad_names, "~/peregrine_amazon/data/wrangling/aad_names.rds")
-aad_names <- readRDS("~/peregrine_amazon/data/wrangling/aad_names.rds")
+aad_names <- readRDS("~/peregrine_amazon/data/wrangling/aad_names.rds") %>%
+  tibble()
 
 #### completed in grit server ####
 
 aad_v2 <- readRDS("~/peregrine_amazon/data/wrangling/aad_v2.rds")
 HNTL <- readRDS("~/peregrine_amazon/data/wrangling/HNTL.rds")
-all_incidence <- readRDS("~/peregrine_amazon/data/wrangling/all_incidence.rds")
+disease <- read.csv("~/network-storage/AmazonMalaria/Data/1_DataProcessing/Disease/annual_incidence_wide.csv")
 all_precip_super <- readRDS("~/peregrine_amazon/data/wrangling/all_precip_super.rds")
 LandscapeMetrics_v4_classmetrics <- read.csv("~/peregrine_amazon/data/wrangling/LandscapeMetrics_v4_classmetrics.csv") %>%
   select(-c(X.NA.)) %>%
@@ -653,9 +619,8 @@ Elevation <- read.csv("~/peregrine_amazon_nogit/data/Elevation/Elevation.csv") %
          var_Elevation = variance)
 
 aad_v3 <- aad_v2 %>%
-  right_join(aad_names, by = c("Code", "Country")) %>% # join with names dictionary, keeping only rows from dictionary
   left_join(HNTL, by = c("Code" = "MuniCode", "Year")) %>% # join with HNTL
-  full_join(all_incidence, by = c("Code", "Year")) %>% #clean this 4/19
+  full_join(disease, by = c("Code", "Year", "Country", "Population", "Name")) %>%
   full_join(all_precip_super, by = c("Code", "Year", "Country")) %>%
   full_join(LandscapeMetrics_v4_classmetrics, by = c("Code"="Muni_ID", "Country", "Year")) %>% # merge with LandscapeMetrics_v4 dfs
   full_join(LandscapeMetrics_v4_adjacency_matrix, by = c("Code"="Muni_ID", "Country", "Year")) %>%
@@ -667,7 +632,7 @@ aad_v3 <- aad_v2 %>%
          SWRecurrence = recurrence,
          SWChange_abs = change_abs,
          SWChange_norm = change_norm) %>%
-  select(Code, Name, Country, Year, CL, NDVI, EVI,
+  select(Code, Name, Country, Year, NDVI, EVI,
          LST_Day, min_LST_Day, max_LST_Day,
          LST_Night, min_LST_Night, max_LST_Night,
          HNTL, StableLights, AvgRad, Precip,
@@ -676,7 +641,7 @@ aad_v3 <- aad_v2 %>%
 
 # saveRDS(aad_v3, "~/peregrine_amazon/data/annual/aad_2021_full.rds")
 
-aad_v3 <- readRDS("~/peregrine_amazon/data/annual/aad_2021_full.rds") # dim: 156256    488
+aad_v3 <- readRDS("~/peregrine_amazon/data/annual/aad_2021_full.rds") # dim: 265711    508
 
 # merge with spatial folds data set from folds_wrangling.R
 folds <- readRDS("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/1/spatial_leave_location_out_cv_k3_hclust_data_splits_dict.rds")
@@ -694,12 +659,11 @@ aad_v4 <- aad_v3 %>%
     # Change in total edge of forest from the previous year
     edge_loss = te_forest - lag(te_forest)
   ) %>%
-  # filter(!is.na(CL)) %>%
   mutate(Country = as.factor(Country)) %>%
   filter(!is.na(forest_density)) %>% # subset to rows that have forest variables recorded
   unique()
 
-# saveRDS(aad_v4, "~/peregrine_amazon/data/wrangling/aad_v4.rds") #dim: 47744   492
+# saveRDS(aad_v4, "~/peregrine_amazon/data/wrangling/aad_v4.rds") #dim: 64179   512
 
 # Get lat, long, and other forest variables
 ## Get geometries of municipalities
@@ -709,7 +673,8 @@ colombia_shp <- read_sf("~/peregrine_amazon/data/colombia/shapefiles/Final_Colom
   select(Code = MPIOS, geometry) %>%
   st_transform(st_crs(brazil_shp))
 peru_shp <- read_sf("~/peregrine_amazon/data/peru/shapefiles/Final_Peru_Amazonian_Municipios_Projected.shp") %>%
-  select(Code = IDDIST, geometry)
+  select(Code = IDDIST, geometry) %>%
+  st_transform(st_crs(brazil_shp))
 
 all_shp <- brazil_shp %>%
   rbind(colombia_shp) %>%
@@ -722,18 +687,17 @@ aad_v5 <- aad_v4 %>%
          long = st_coordinates(centroids)[,1],
          lat = st_coordinates(centroids)[,2]) %>%
   select(-centroids) %>%
-  filter(!is.na(CL)) %>%
   mutate(Country = as.factor(Country)) %>%
   st_set_geometry(.$geometry)
 
-saveRDS(aad_v5, "~/peregrine_amazon/data/annual/aad_2021_forests_geom.rds")  # dim: 26213   495
+saveRDS(aad_v5, "~/network-storage/AmazonMalaria/Data/1_DataProcessing/DF/aad_2021_forests_geom.rds")  # dim: 64179   515
 
 
 aad_v6 <- aad_v5 %>%
   st_drop_geometry()
 
-saveRDS(aad_v6, "~/peregrine_amazon/data/annual/aad_2021_forests.rds")  # dim: 26213   494
-write.csv(aad_v6, "~/peregrine_amazon/data/annual/aad_2021_forests.csv")
+saveRDS(aad_v6, "~/peregrine_amazon/data/annual/aad_2021_forests.rds")  # dim: 64179   514
+write.csv(aad_v6, "~/network-storage/AmazonMalaria/Data/1_DataProcessing/DF/aad_2021_forests.csv")
 
 
 ## Missing
@@ -815,11 +779,8 @@ old_aad_subset <- old_aad %>%
   group_by(Code, Year) %>%
   arrange(Code, .by_group = T) %>%
   filter(!is.na(CL)) %>%
-  filter(!is.na(pland_forest)) %>%
-  ungroup()
 
-( ( old_aad_subset$Code %>% unique() %>% sort() ) == ( aad_v6_subset$Code %>% unique() %>% sort() ) ) %>%
-  summary() # all true
+  ungroup()
 
 old_aad_subset_summarized <- old_aad_subset %>%
   summarise(across(where(is.numeric), list(mean=mean, var=var), na.rm=T))
