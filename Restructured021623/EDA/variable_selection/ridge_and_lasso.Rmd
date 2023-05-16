@@ -1,0 +1,366 @@
+---
+title: "Variable Selection Using Ridge and Lasso"
+author: "TJ Sipin"
+date: "2023-04-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(sf)
+library(rsample)
+library(caret)
+library(vip)
+library(glmnet)
+library(dplyr)
+
+```
+
+Followed tutorial here https://www.pluralsight.com/guides/linear-lasso-and-ridge-regression-with-r.
+
+
+# Data
+```{r}
+data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>% 
+  # select only general and forest variables
+  select(Code:Population, min_Precip:max_Precip_Month, 
+         forest_density, SWChange_abs:lat, -AvgRad, -StableLights) %>% 
+  filter(!is.na(CL),
+       !is.na(forest_density)) %>% 
+  mutate(CL = ifelse(CL > 0, 1, 0) %>% 
+           as.factor()) %>% 
+  mutate(Country = as.factor(Country))
+data %>% glimpse()
+```
+
+
+## Partition
+
+```{r}
+set.seed(123)
+# use whole data set here
+full.split <- initial_split(data, strata = CL)
+full.datrain <- training(full.split)
+full.datest <- testing(full.split)
+```
+
+## Scale numeric features
+
+```{r}
+full.predictors <- data %>% 
+  select(-CL, -Code, -Country, -Name, -Year) %>% 
+  names()
+
+full.pre_proc_val <- preProcess(
+  x = full.datrain %>% select(all_of(full.predictors)),
+  method = c("center", "scale"))
+
+full.datrain[, full.predictors] <- predict(
+  full.pre_proc_val, 
+  full.datrain %>% select(all_of(full.predictors))
+)
+
+full.datest[, full.predictors] <- predict(
+  full.pre_proc_val,
+  full.datest %>% select(all_of(full.predictors))
+)
+
+summary(full.datrain)
+```
+
+## Full logistic regression
+
+```{r}
+ml_formula <- as.formula(paste("CL ~", paste0(full.predictors, collapse=' + ')))
+
+full.log_reg <- glm(ml_formula, data=full.datrain, family=binomial)
+```
+
+### Get McFadden's R-squared
+```{r}
+full.null_log_reg <- glm(CL ~ 1, data=full.datrain, family=binomial)
+
+# McFadden's R squared
+1-logLik(full.log_reg)/logLik(full.null_log_reg)
+```
+
+### Get other metrics
+
+```{r}
+# predict model on training data
+full.pred_train <- predict(full.log_reg, full.datrain, type='response')
+# predict model on testing data
+full.pred_out <- predict(full.log_reg, full.datest, type='response')
+
+# get ROAUC on training data
+full.auc_train <- pROC::roc(
+  response=full.datrain$CL, predictor=full.pred_train,
+  levels=c(0,1), auc=T
+)
+
+# get ROAUC on testing data
+full.auc_out <- pROC::roc(
+  response=full.datest$CL, predictor=full.pred_out,
+  levels=c(0,1), auc=T
+)
+
+# get best threshold on training data
+full.best_threshold_train <- pROC::coords(
+  full.auc_train,
+  "best",
+  ret="threshold"
+)$threshold
+
+# get best threshold on testing data
+full.best_threshold_out <- pROC::coords(
+  full.auc_out,
+  "best", 
+  ret="threshold"
+)$threshold
+
+# make confusion matrix using obtained threshold for training set
+full.metrica_format_train <- data.frame(
+  cbind(ifelse(full.datrain$CL==1,1,0),
+        ifelse(full.pred_train>=full.best_threshold_train, 1, 0))
+) %>% 
+  mutate_all(as.factor)
+
+colnames(full.metrica_format_train) <- c("labels", "predictions")
+rownames(full.metrica_format_train) <- 1:nrow(full.metrica_format_train)
+
+full.metrica_format_train <- full.metrica_format_train$predictions %>% 
+      confusionMatrix(positive='1', reference=full.metrica_format_train$labels)
+
+# make confusion matrix using obtained threshold for testing set
+full.metrica_format_out <- data.frame(
+  cbind(ifelse(full.datest$CL==1,1,0),
+        ifelse(full.pred_out>=full.best_threshold_out, 1, 0))
+) %>% 
+  mutate_all(as.factor)
+
+colnames(full.metrica_format_out) <- c("labels", "predictions")
+rownames(full.metrica_format_out) <- 1:nrow(full.metrica_format_out)
+
+full.metrica_format_out <- full.metrica_format_out$predictions %>% 
+      confusionMatrix(positive='1', reference=full.metrica_format_out$labels)
+
+## Both perform similarly, which means no overfitting
+
+## Create evaluation metrics table
+
+full.metrica.table <- data.frame(
+  model = "full.log_reg",
+  auc = full.auc_out$auc,
+  Accuracy = full.metrica_format_out$overall[[1]],
+  AccuracyPValue = full.metrica_format_out$overall[[6]],
+  Sensitivity = full.metrica_format_out$byClass[[1]],
+  Specificity = full.metrica_format_out$byClass[[2]]
+)
+```
+
+```{r}
+full.metrica_format_train
+```
+
+```{r}
+full.metrica_format_out
+```
+
+Here, we see that the model performs quite similarly for both data sets, and even performs better on the testing data, which means there is no overfitting detected.
+
+```{r}
+# display metrics table on testing data
+full.metrica.table
+```
+
+## Regularization
+
+Use regularization to shrink coefficients through the `glmnet` package. First, we need to create a model matrix.
+
+```{r}
+dummies.mod <- dummyVars(ml_formula, data=full.datrain)
+
+dummies.pred_train <- predict(dummies.mod, newdata=datrain)
+dummies.pred_out <- predict(dummies.mod, newdata=datest)
+```
+
+### Ridge regression
+
+The parameters are as follows:
+1. `nlambda` determines the number of regularization parameters to test.
+2. `alpha` determines the weighting to use. For ridge regression, alpha is zero.
+3. `family` describes which distribution family to use.
+4. `lambda` is the set of penalty terms we give to the magnitude of the weights. The larger the value of $\lambda$, the greater the penalty for large weight values, which in turn produce simpler and smoother models. These help reconstruct the model to become more generalizable to new data and reduce overfitting.
+
+```{r}
+dummies.x_train = dummies.pred_train %>% 
+  as.data.frame() %>% 
+  makeX(na.impute=T) # need to impute NA values to allow glmnet to work
+
+dummies.y_train = full.datrain$CL %>% 
+  as.integer() - 1
+
+dummies.x_test = dummies.pred_out %>% 
+  as.data.frame() %>% 
+  makeX(na.impute=T)
+
+dummies.y_test = full.datest$CL %>% 
+  as.integer() - 1
+
+dummies.lambdas = 10^seq(2, -3, by = -.1)
+
+ridge_reg.mod = glmnet(
+  dummies.x_train, dummies.y_train, 
+  nlambda=25, alpha=0, 
+  family='binomial',
+  lambda=dummies.lambdas
+)
+
+# use cv.glmnet() to automate finding the optimal lambda value
+
+cv_ridge <- cv.glmnet(dummies.x_train, dummies.y_train,
+                      alpha=0,
+                      lambda=dummies.lambdas)
+
+ridge_reg.optimal_lambda <- cv_ridge$lambda.min
+ridge_reg.optimal_lambda # 0.001
+```
+
+Let's make a function to get our metrics. 
+
+```{r}
+# make function to see metrics
+eval_results <- function(true, predicted){
+  true = factor(true)
+  eval.auc <- pROC::roc(
+    response=true, predictor=predicted,
+    levels=c(0,1), auc=T
+  )
+  
+  eval.best_threshold <- pROC::coords(
+    eval.auc,
+    'best',
+    ret='threshold'
+  )$threshold
+  
+  eval.metrica_format <- data.frame(
+    cbind(ifelse(true==1,1,0),
+          ifelse(predicted>=eval.best_threshold, 1, 0))
+  ) %>% 
+    mutate_all(as.factor)
+  
+  colnames(eval.metrica_format) <- c("labels", "predictions")
+  rownames(eval.metrica_format) <- 1:nrow(eval.metrica_format)
+  
+  eval.metrica_format <- eval.metrica_format$predictions %>% 
+    confusionMatrix(positive="1", reference=eval.metrica_format$labels)
+  
+  return(eval.metrica_format)
+}
+```
+
+First, we try on the training data.
+
+```{r}
+# Test using predict()
+
+ridge_reg.pred_train <- predict(
+  ridge_reg.mod, s=ridge_reg.optimal_lambda, newx=dummies.x_train, type='response'
+)[,1]
+
+eval_results(dummies.y_train, ridge_reg.pred_train)
+```
+
+
+Now onto the testing data.
+
+```{r}
+ridge_reg.pred_test <- predict(
+  ridge_reg.mod, s=ridge_reg.optimal_lambda, newx=dummies.x_test, type='response'
+)[,1]
+
+eval_results(dummies.y_test, ridge_reg.pred_test)
+```
+
+Again, there seems to be a recurring theme that the model performs slightly better in accuracy. Todo: check ROAUC.
+
+### Lasso regression
+
+
+
+```{r}
+cv_lasso <- cv.glmnet(dummies.x_train, dummies.y_train, 
+                      alpha=1, # setting alpha=1 implements lasso regression
+                      lambda=dummies.lambdas,
+                      standardize=T,
+                      nfolds=5)
+
+# best lambda
+lasso_reg.best_lambda <- cv_lasso$lambda.min
+```
+
+```{r}
+lasso_reg.mod <- glmnet(
+  dummies.x_train, 
+  dummies.y_train,
+  alpha=1,
+  lambda=lasso_reg.best_lambda,
+  standardize=T
+)
+
+lasso_reg.pred_train <- predict(lasso_reg.mod, s=lasso_reg.best_lambda, newx=dummies.x_train)
+lasso_reg.pred_test <- predict(lasso_reg.mod, s=lasso_reg.best_lambda, newx=dummies.x_test)
+```
+
+```{r}
+eval_results(dummies.y_train, lasso_reg.pred_train)
+eval_results(dummies.y_test, lasso_reg.pred_test)
+```
+
+
+### Elastic net regulation
+
+```{r}
+# Set training control
+enet.train_control <- trainControl(
+  method="repeatedcv",
+  number=5,
+  repeats=5,
+  search="random",
+  verboseIter=T,
+  classProbs=T
+)
+
+# change class levels for CL
+enet.datrain <- full.datrain %>% 
+  mutate(CL = case_when(CL==0 ~ "absent",
+                        CL==1 ~ "present"))
+
+# Train the model
+enet.mod <- train(
+  ml_formula,
+  data=enet.datrain,
+  method="glmnet",
+  preprocess=c("center", "scale"),
+  tuneLength=5,
+  trControl=enet.train_control,
+  na.action=na.omit,
+  importance=T,
+  summaryFunction=twoClassSummary,
+  me
+)
+```
+#### Make predictions on data set
+
+```{r}
+enet.pred_train <- predict(enet.mod, full.datrain, na.action=na.pass) %>% 
+  as.integer()
+eval_results(full.datrain$CL, enet.pred_train)
+
+enet.pred_test <- predict(enet.mod, full.datest, na.action=na.pass) %>% 
+  as.integer()
+eval_results(full.datest$CL, enet.pred_test)
+```
+
+
