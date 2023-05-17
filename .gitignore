@@ -4,3 +4,4 @@
 .Ruserdata
 *.shp
 data/colombia/neighborhood/*
+.Renviron
