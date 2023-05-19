@@ -1,0 +1,33 @@
+---
+title: "compare"
+output: html_document
+date: "2023-05-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Data
+
+```{r}
+old <- read.csv("/home/jessiejzhou/peregrine-amazon/data/annual/old_aad.csv")
+new <- readRDS("/home/jessiejzhou/peregrine-amazon/data/annual/aad_2021_forests.rds")
+
+brazil_old <- subset(old, Country == "Brazil")
+brazil_new <- subset(new, Country == "Brazil")
+```
+
+
+Grabbing only disease data from both
+```{r}
+brazil_old_diseases <- subset(brazil_old, select = c("Code", "Name", "Country",
+                                                     "Year", "Chikungunya", 
+                                                     "Cutaneous.Leishmaniasis", "Dengue",
+                                                     "Malaria","Yellow.Fever", "Zika"))
+brazil_new_diseases <- subset(brazil_new, select = c("Code", "Name", "Country",
+                                                     "Year", "Chikungunya", 
+                                                     "Cutaneous.Leishmaniasis", "Dengue",
+                                                     "Malaria","Yellow.Fever", "Zika"))
+
+```
