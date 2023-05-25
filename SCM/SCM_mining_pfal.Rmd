@@ -1,0 +1,347 @@
+---
+title: "Synthetic Control Method (Binary Deforestation) for P. fal Malaria"
+author: "TJ Sipin"
+date: "2023-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+# remotes::install_github("ebenmichael/augsynth")
+library(microsynth)
+library(augsynth)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(kableExtra)
+```
+
+In this script, we set our treatment units to be municipalities that have experienced deforestation in the last year. We may extend the synthetic control methods (SCM) to study municipalities that have experienced mining. The target variable is Pfal.Malaria, though this can be extended to any disease in the data set. In this script, our intervention is binary, whereas a potential future avenue might be to set the intervention to be continuous.
+
+## Data
+
+```{r}
+full_data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>% 
+  group_by(Code) %>% 
+  rename(mining_density = pland_mining) %>% 
+  mutate(mining_fragmentation = enn_mn_mining * area_mn_mining,
+         mining_change = mining_density - lag(mining_density),
+         mining_edge_change = te_mining - lag(te_mining),
+         intervention.st = (lag(mining_density) == 0) & (mining_density > 0)) %>% 
+  ungroup() 
+
+intervention_data <- full_data %>% 
+  filter(intervention.st == T) %>% 
+  group_by(Code) %>% 
+  filter(row_number() == 1) %>%
+  complete(Year = Year:2020) %>% # get all years after the initial mining presence
+  ungroup() %>% 
+  select(Code, Year) %>% 
+  unique() %>% 
+  # use this key_pair column to access later
+  mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) 
+```
+
+Our data is incredibly wide: with `dim(full_data)`. We can reduce the number of variables:
+
+```{r}
+data <- full_data %>% 
+  filter(!is.na(Pfal.Malaria)) %>%  # remove observations with missing Pfal.Malaria
+  select(# ID vars 
+         Code, Name, Country, Year, 
+         Pfal.Malaria, intervention.st,
+         # don't use in this analysis
+         mining_fragmentation, mining_change, mining_edge_change, mining_density, 
+         # time-variant vars
+         forest_density, land_use_change, forest_fragmentation, edge_loss,
+         NDVI, LST_Day, min_LST_Day, max_LST_Day,
+         HNTL, Precip, min_Precip, max_Precip, min_Precip_Month, max_Precip_Month,
+         # time-invariant vars
+         mean_Elevation, var_Elevation, SWChange_abs, SWRecurrence, SWSeasonality, SWOccurrence) 
+
+dim(data)
+```
+
+We have reduced our number of columns to `r ncol(data)`, which is much better than `r ncol(full_data)`.
+
+Our outcome variable is disease incidence - in this case, Pfal.Malaria. There is an issue of how to define our intervention variable. We first explore the nature of mining for each municipality in our time frame.
+
+```{r}
+print(paste("Number of municipalities with mining: ", data %>% filter(mining_density > 0) %>% select(Code) %>% unique() %>% nrow()))
+print(paste("Total number of municipalities: ", data %>% select(Code) %>% unique() %>% nrow()))
+```
+
+We see that there is a total of 189 municipalities in our study set that experienced mining. Compare that to the total number of municipalities (5719) and we have less than 4% of municipalities that have had any mining.
+
+Now let's explore the municipalities that have experienced mining.
+
+```{r}
+# get muni codes that have been mined at some time t
+mined_munis <- full_data %>% 
+  filter(mining_density > 0) %>% 
+  select(Code) %>% 
+  unique()
+
+mined_data <- full_data %>% 
+  filter(Code %in% mined_munis$Code)
+
+# see how many munis we can work with
+# we cannot use observations where there is no time of intervention (year started mining)
+mined_data %>% 
+  filter(mining_density == 0) %>% 
+  select(Code) %>% 
+  unique()
+```
+
+We see that we have 17 municipalities to work with. We now construct a new variable to show when the municipality first saw mining activity.
+
+```{r}
+mined_data %>% 
+  select(Code, Name, Country, Year, intervention.st, everything()) %>% 
+  filter(Code %in% intervention_data$Code, Year %in% intervention_data$Year) %>% 
+  select(Year) %>% 
+  ggplot() +
+  geom_histogram(aes(Year))
+```
+
+```{r}
+# get dictionary for districts and year of first mining activity
+first_intervention_data <- intervention_data %>% 
+  group_by(Code) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  rename(intervention = Year) %>% 
+  select(-key_pair)
+
+
+data.use <- data %>% 
+  mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) %>% 
+  group_by(Code) %>% 
+  # filter out Peru since there's no data for years before 2016
+  filter(Country != "Peru") %>%
+  # mark the first observation of mining in the municipality
+  mutate(mined = key_pair %in% intervention_data$key_pair) %>% 
+  # filter out municipalities that have incomplete data (missing for some years)
+  filter(n() == 2020 - 2007 + 1) %>%
+  ungroup() %>% 
+  select(Code, Name, Country, Year, Pfal.Malaria, mined, everything(), intervention.st) %>% 
+  complete(nesting(Code), Year = full_seq(Year, period = 1)) %>% 
+  as.data.frame() %>% 
+  full_join(first_intervention_data, by=c("Code")) %>% 
+  mutate(intervention = ifelse(is.na(intervention),
+                               Inf, intervention))
+
+data.use.v2 <- data.use %>% 
+  mutate(land_use_change = case_when(land_use_change < 0 ~ T,
+                                     land_use_change >= 0 ~ F))
+
+# define idvar
+ms.idvar <- "Code"
+# define intvar
+ms.intvar <- "mined"
+
+# time-invariant covariates
+
+ms.covar.min <- c("mean_Elevation", "var_Elevation",
+                  "SWChange_abs", "SWRecurrence", "SWSeasonality", "SWOccurrence")
+
+# time-varying covariates
+ms.match.out.min <- c("forest_density", "forest_fragmentation", "edge_loss",
+                  "NDVI", "LST_Day", "min_LST_Day", "max_LST_Day", "HNTL",
+                  "Precip", "min_Precip", "max_Precip", "min_Precip_Month", "max_Precip_Month")
+
+# result variable
+ms.result.var <- "Pfal.Malaria"
+
+data.use.v3 <- data.use.v2 %>% 
+  filter(across(c(ms.covar.min, ms.match.out.min), ~ !is.na(.x)))
+```
+
+
+```{r}
+ms.2013 <- microsynth(
+  as.data.frame(data.use.v3), idvar = ms.idvar,
+  intvar = ms.intvar, timevar = "Year",
+  start.pre = 2007, end.pre = 2013, end.post = 2020,
+  match.out.min = ms.match.out.min,
+  match.covar.min = ms.covar.min, 
+  result.var = ms.result.var, omnibus.var = ms.result.var,
+  jack = T, use.survey=T, use.backup=T, 
+  test = "upper", n.cores = 0, check.feas = T
+)
+
+
+kable_material_dark(kable(ms.2013$Results))
+summary(ms.2013)
+
+ms.2013 %>% plot_microsynth(
+  plot.var = "Pfal.Malaria", end.pre = 2013, end.post = 2020)
+```
+
+
+Pfal.Malaria incidence was significantly higher in districts with mining activity, using a synthetic control method with preintervention period of 2007 to 2013 (estimate 260.1%, linear CI (136.0, 449.5), linear p-value = 0.0001, jackknife CI (-36.7, 1948.5), jackknife p-value = 0.0590).
+
+Just to see what changing the preintervention period might do, the below code keeps everything the same except ending the preintervention period in 2016.
+
+```{r}
+ms.2016 <- microsynth(
+  as.data.frame(data.use.v3), idvar = ms.idvar,
+  intvar = ms.intvar, timevar = "Year",
+  start.pre = 2007, end.pre = 2016, end.post = 2020,
+  match.out.min = ms.match.out.min,
+  match.covar.min = ms.covar.min, 
+  result.var = ms.result.var, omnibus.var = ms.result.var,
+  jack = T, use.survey=T, use.backup=T,
+  test = "upper", n.cores = 0, check.feas = T
+)
+
+ms.2016 %>% plot_microsynth(
+  plot.var = "Pfal.Malaria", end.pre = 2016, end.post = 2020)
+
+ms.2016 %>% summary()
+```
+
+The results have significantly higher p-values, though still suggest an 86.5% increase in Pfal.Malaria incidence for districts that were mined.
+
+### Staggered SCM
+
+There is an issue with using the traditional SCM using microsynth: districts in the treatment group were mined at different times, so the above approach may be inappropriate. The following uses the augsynth package based on the paper by Eli Ben-Michael, Avi Feller, and Jesse Rothstein that allows estimation of treatment effects with staggered intervention.
+
+```{r}
+library(augsynth)
+```
+
+
+#### Set up
+
+First, we set up the data to make it usable under the `augsynth()` function. We already have a binary treatment variable called `mining`, but we need to set a variable denoting the start of the treatment for each district. If a district was not treated, then we set the year to $inf$.
+
+```{r}
+aug.data <- data.use %>% 
+  mutate(intervention = ifelse(is.na(intervention),
+                               Inf, intervention),
+         mined = 1* (Year >= intervention)) %>% 
+  select(Code, Name, Country, Year, Pfal.Malaria, mined, intervention, everything(), -intervention.st, -key_pair) %>% 
+  # filter(complete.cases(.)) %>% 
+  filter(intervention>2008)
+
+saveRDS(aug.data, "~/peregrine_amazon/SCM/data/aug.data.rds")
+
+aug.data <- readRDS("~/peregrine_amazon/SCM/data/aug.data.rds") %>% 
+  group_by(Code) %>% 
+  filter(n() > 1) %>% 
+  ungroup() %>% 
+  filter(across(all_of(c(ms.covar.min, ms.match.out.min)), ~ !is.na(.x)))
+
+```
+
+We need to remove observations that first started mining before our preintervention period (2007) and before 2009 since we need units with more than one pre-treatment outcomes.
+
+#### Partially pooled SCM w/ intercept
+
+We use the function `multisynth` to estimate mining effects. Setting the level of partial pooling parameter `nu = 0` fits a separate synthetic control for each treated district, while setting `nu = 1` fits fully pooled synthetic controls. Not specifying `nu` prompts `multisynth` to find a `nu` based on the performance of separate synthetic controls on balancing the overall average. We try different options below in a dry-run, without any covariates.
+
+```{r}
+# nu = 0
+ppool_syn.0 <- multisynth(Pfal.Malaria ~ mined, 
+                          unit = Code, 
+                          time = Year, 
+                          nu = 0,
+                          data = aug.data)
+
+ppool_syn.0
+summary(ppool_syn.0) 
+plot(ppool_syn.0)
+```
+
+```{r}
+# nu = 1
+ppool_syn.1 <- multisynth(Pfal.Malaria ~ mined, 
+                          unit = Code, 
+                          time = Year, 
+                          nu = 1,
+                          data = aug.data)
+
+ppool_syn.1
+summary(ppool_syn.1)
+plot(ppool_syn.1)
+```
+
+```{r}
+# nu = NULL
+ppool_syn.NULL <- multisynth(Pfal.Malaria ~ mined, 
+                          unit = Code, 
+                          time = Year, 
+                          nu = NULL,
+                          data = aug.data)
+
+ppool_syn.NULL$nu
+ppool_syn.NULL
+summary(ppool_syn.NULL)
+plot(ppool_syn.NULL)
+```
+
+
+These results aren't terribly significant. Let's try `time_cohort = T` to collapse treated districts treated in the same year into time cohorts, finding one synthetic control per time cohort.
+
+#### Time cohorts
+
+```{r}
+# use default nu
+ppool_syn.NULL.time <- multisynth(Pfal.Malaria ~ mined, 
+                                  unit = Code, time = Year,
+                                  aug.data, time_cohort = T)
+
+print(ppool_syn.NULL.time$nu)
+ppool_syn.NULL.time
+summary(ppool_syn.NULL.time)
+plot(ppool_syn.NULL.time)
+```
+
+There doesn't seem to be much more of an improvement in significance. Let's now try adding in covariates.
+
+#### Covariates
+
+```{r}
+t0 <- Sys.time()
+# default nu
+# ppool_syn.NULL.cov <- multisynth(Pfal.Malaria ~ mined |
+#                                    mean_Elevation + var_Elevation +
+#                                    SWChange_abs + SWRecurrence + SWSeasonality + SWOccurrence +
+#                                    forest_density + forest_fragmentation + edge_loss +
+#                                    NDVI + LST_Day + min_LST_Day + max_LST_Day + HNTL +
+#                                    Precip + min_Precip + max_Precip + min_Precip_Month + max_Precip_Month,
+#                                  Code, Year,
+#                                  data = aug.data)
+
+ppool_syn.NULL.cov <- multisynth(Pfal.Malaria ~ mined |
+                                   mean_Elevation + SWOccurrence +
+                                   forest_density + forest_fragmentation +
+                                   NDVI + LST_Day + HNTL +
+                                   Precip,
+                                 Code, Year,
+                                 data = aug.data)
+Sys.time() - t0
+
+ppool_syn.NULL.cov %>% summary()
+ppool_syn.NULL.cov %>% plot()
+
+ppool_syn.NULL.cov$imbalance_aux
+
+treated_codes <- aug.data %>% filter(mined==1) %>% select(Code) %>% unique()
+
+aug.data %>% filter(Code %in% treated_codes$Code) %>% ggplot() + 
+  geom_line(aes(x = Year, y = Pfal.Malaria, 
+                color = mined, group = Code)) 
+
+aug.data %>% ggplot(aes(x = Year, y = Pfal.Malaria)) + 
+  geom_line(aes(color = mined, group = Code), alpha = 0.2) + 
+  stat_smooth(method = "lm",
+              formula = y ~ x,
+              geom = "smooth")
+
+aug.data %>% filter(Code==1400282)
+```
+
+
+There doesn't seem to be a statistically significant effect of mining on P.fal Malaria.

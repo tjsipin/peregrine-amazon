@@ -1,0 +1,225 @@
+---
+title: "Synthetic Control Method (Binary Deforestation)"
+author: "TJ Sipin"
+date: "2023-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+# remotes::install_github("ebenmichael/augsynth")
+library(microsynth)
+library(augsynth)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(kableExtra)
+```
+
+In this script, we set our treatment units to be municipalities that have experienced deforestation in the last year. We may extend the synthetic control methods (SCM) to study municipalities that have experienced mining. The target variable is malaria caused by Plasmodium falciparum, though this can be extended to any disease in the data set. In this script, our intervention is binary, whereas a potential future avenue might be to set the intervention to be continuous. We use Plasmodium falciparum malaria since we have more data on it.
+
+## Data
+
+```{r}
+full_data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>% 
+  group_by(Code) %>% 
+  mutate(row_number = row_number()) %>% 
+  mutate(intervention.st = land_use_change < 0) %>%
+  mutate(add_land_use_change = cumsum(land_use_change)) %>% 
+  ungroup() 
+
+# saveRDS(full_data, "~/peregrine_amazon/SCM/deforestation/data/full_data.rds")
+
+intervention_data <- full_data %>% 
+  filter(intervention.st == T) %>% 
+  group_by(Code) %>% 
+  filter(row_number() == 1) %>%
+  complete(Year = Year:2020) %>% # get all years after the initial mining presence
+  ungroup() %>% 
+  select(Code, Year) %>% 
+  unique() %>% 
+  # use this key_pair column to access later
+  mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) 
+
+# saveRDS(intervention_data, "~/peregrine_amazon/SCM/deforestation/data/intervention_data.rds")
+```
+
+Our data is incredibly wide: with `dim(full_data)`. We can reduce the number of variables:
+
+```{r}
+data <- full_data %>% 
+  filter(!is.na(Pfal.Malaria)) %>%  # remove observations with missing Malaria
+  select(# ID vars 
+         Code, Name, Country, Year, 
+         Pfal.Malaria, intervention.st, forest_density,
+         # time-variant vars
+         land_use_change, forest_fragmentation, edge_loss,
+         NDVI, LST_Day, min_LST_Day, max_LST_Day,
+         HNTL, Precip, min_Precip, max_Precip, min_Precip_Month, max_Precip_Month,
+         # time-invariant vars
+         mean_Elevation, var_Elevation, SWChange_abs, SWRecurrence, SWSeasonality, SWOccurrence) %>% 
+  mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) 
+
+# saveRDS(data, "~/peregrine_amazon/SCM/deforestation/data/data.rds")
+
+dim(data)
+```
+
+```{r}
+data <- readRDS("~/peregrine_amazon/SCM/deforestation/data/data.rds")
+```
+
+
+We have reduced our number of columns to `r ncol(data)`, which is much better than `r ncol(full_data)`.
+
+Our outcome variable is disease incidence - in this case, Malaria. There is an issue of how to define our intervention variable. We first explore the nature of deforestation for each municipality in our time frame.
+
+```{r}
+print(paste("Number of municipalities with deforestation: ", 
+            data %>% filter(key_pair %in% intervention_data$key_pair) %>% select(Code) %>% unique() %>% nrow()))
+print(paste("Total number of municipalities: ", data %>% select(Code) %>% unique() %>% nrow()))
+```
+
+Now let's explore the municipalities that have experienced deforestation.
+
+```{r}
+# get muni codes that have been deforested at some time t
+deforested_munis <- data %>% 
+  filter(key_pair %in% intervention_data$key_pair) %>% 
+  select(Code) %>% 
+  unique()
+
+deforested_data <- data %>% 
+  filter(Code %in% deforested_munis$Code)
+
+# see how many munis we can work with
+# we cannot use observations where there is no time of intervention (year started deforesting)
+deforested_data %>% 
+  filter(land_use_change == 0) %>% # filter such that there are no observations with land use change equal to zero; these are municipalities we cannot use
+  select(Code) %>% 
+  unique()
+```
+
+
+We see that we have 40 municipalities to work with. We now construct a new variable to show when the municipality first saw mining activity.
+
+```{r}
+deforested_data %>% 
+  select(Code, Name, Country, Year, intervention.st, everything()) %>% 
+  filter(key_pair %in% intervention_data$key_pair) %>% 
+  select(Year) %>% 
+  ggplot() +
+  geom_histogram(aes(Year))
+```
+
+
+### Set up SCM
+
+
+```{r scm set up}
+# define idvar
+ms.idvar <- "Code"
+# define intvar
+ms.intvar <- "deforested"
+
+# time-invariant covariates
+
+ms.covar.min <- c("mean_Elevation", "var_Elevation",
+                  "SWChange_abs", "SWRecurrence", "SWSeasonality", "SWOccurrence")
+
+# time-varying covariates
+ms.match.out.min <- c("forest_density", "forest_fragmentation", "edge_loss",
+                  "NDVI", "LST_Day", "min_LST_Day", "max_LST_Day", "HNTL",
+                  "Precip", "min_Precip", "max_Precip", "min_Precip_Month", "max_Precip_Month")
+
+# result variable
+ms.result.var <- "Pfal.Malaria"
+
+# get year of first treatment called intervention
+first_intervention_data <- intervention_data %>% 
+  group_by(Code) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  rename(intervention = Year) %>% 
+  select(-key_pair)
+
+
+# define usable data set
+data.use <- data %>% 
+  mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) %>% 
+  group_by(Code) %>% 
+  # filter out Peru since there's no data for years before 2016
+  # filter(Country != "Peru") %>%
+  # mark the observations of deforestation in the municipality
+  mutate(deforested = key_pair %in% intervention_data$key_pair) %>% 
+  # filter out municipalities that have incomplete data (missing for some years)
+  filter(n() == 2020 - 2007 + 1) %>%
+  ungroup() %>% 
+  # balance the data set by code across all years
+  complete(nesting(Code), Year = full_seq(Year, period = 1)) %>% 
+  as.data.frame() %>% 
+  # merge data with first intervention years
+  full_join(first_intervention_data, by=c("Code")) %>% 
+  mutate(intervention = ifelse(is.na(intervention),
+                               Inf, intervention),
+         deforested = 1* (Year >= intervention)) %>% 
+  # rearrange variables
+  select(Code, Name, Country, Year, Pfal.Malaria, intervention, everything(), -intervention.st, -key_pair) %>% 
+  # multisynth needs a few years of pre-intervention in order to work
+  # filter(intervention > 2008) %>% 
+  # group_by(Code) %>% 
+  # # filter(n() > 1) %>% 
+  # ungroup() %>% 
+  # need as many complete cases as possible, so only filter out missing data for covariates
+  filter(across(all_of(c(ms.covar.min, ms.match.out.min)), ~ !is.na(.x)))
+
+# saveRDS(data.use, "~/peregrine_amazon/SCM/deforestation/data/data.use.rds")
+  
+c(ms.covar.min, ms.match.out.min)
+data.use %>% summary()
+
+data %>% 
+    mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) %>% 
+    group_by(Code) %>% 
+    # filter out Peru since there's no data for years before 2016
+    # filter(Country != "Peru") %>%
+    # mark the observations of deforestation in the municipality
+    mutate(deforested = key_pair %in% intervention_data$key_pair) %>% 
+    # filter out municipalities that have incomplete data (missing for some years)
+    # filter(n() == 2020 - 2007 + 1) %>%
+    ungroup() %>% 
+    # balance the data set by code across all years
+    complete(nesting(Code), Year = full_seq(Year, period = 1)) %>% 
+    as.data.frame() %>% 
+    # merge data with first intervention years
+    full_join(first_intervention_data, by=c("Code")) %>% 
+    mutate(intervention = ifelse(is.na(intervention),
+                                 Inf, intervention),
+           deforested = 1* (Year >= intervention)) %>% 
+    # rearrange variables
+    select(Code, Name, Country, Year, Pfal.Malaria, intervention, everything(), -intervention.st, -key_pair) %>% 
+    # multisynth needs a few years of pre-intervention in order to work
+    filter(intervention > 2008) %>% 
+    group_by(Code) %>% 
+    # filter(n() > 1) %>% 
+    ungroup() %>% summary()
+```
+
+#### Choose different nu without covariates
+
+```{r}
+# nu = 0
+ppool_syn.0 <- multisynth(Malaria ~ deforested, 
+                          unit = Code, 
+                          time = Year, 
+                          nu = 0,
+                          data = data.use)
+
+ppool_syn.0
+summary(ppool_syn.0) 
+plot(ppool_syn.0)
+```
+
+
+
+
