@@ -76,7 +76,7 @@ cleanerFunc_precip <- function(data, country){
 cleanerFunc_LST_Day <- function(data, country){
 
   cleaned <- data %>%
-    dplyr::select(-c(.geo)) %>%
+    dplyr::select(-c(.geo, system.index)) %>%
     mutate(Year = substring(date, 1, 4) %>% as.integer(),
            Month = substring(date, 6, 7) %>% as.integer(),
            Country = country) %>%
@@ -95,7 +95,7 @@ cleanerFunc_LST_Day <- function(data, country){
 cleanerFunc_LST_Night <- function(data, country){
 
   cleaned <- data %>%
-    dplyr::select(-c(.geo)) %>%
+    dplyr::select(-c(.geo, system.index)) %>%
     mutate(Year = substring(date, 1, 4) %>% as.integer(),
            Month = substring(date, 6, 7) %>% as.integer(),
            Country = country) %>%
@@ -370,7 +370,7 @@ for(file in HNTL_IC){
 colombia_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Colombia') %>%
   dplyr::select(Code) %>%
-  unique()
+  distinct()
 
 
 # move all final files to ~/peregrine_amazon/data/colombia/processed/annual folder
@@ -401,7 +401,7 @@ full_colombia_env_vars_v2 <- full_colombia_env_vars %>%
   group_by(Code) %>%
   arrange(Year, .by_group = T) %>%
   ungroup() %>%
-  filter(Code %in% colombia_munis_filter$Code) %>%
+  # filter(Code %in% colombia_munis_filter$Code) %>%
   dplyr::select(Code, Year, Country, Population, NDVI, EVI,
                 LST_Day, max_LST_Day, min_LST_Day,
                 LST_Night, max_LST_Night, min_LST_Night,
@@ -416,7 +416,7 @@ full_colombia_env_vars_v2 <- full_colombia_env_vars %>%
 peru_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Peru') %>%
   dplyr::select(Code) %>%
-  unique()
+  distinct()
 
 processed_peru_files <- list.files("~/peregrine_amazon/data/peru/processed/final/annual/", full.names = T, pattern = "_annual")
 
@@ -461,7 +461,7 @@ full_peru_env_vars_v2 <- full_peru_env_vars %>%
 brazil_munis_filter <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
   filter(Country == 'Brazil') %>%
   dplyr::select(Code) %>%
-  unique()
+  distinct()
 
 processed_brazil_files <- list.files("~/peregrine_amazon/data/brazil/processed/final/annual/", full.names = T, pattern = "_annual")
 
@@ -494,9 +494,9 @@ full_brazil_env_vars_v2 <- full_brazil_env_vars %>%
                 Tair_f_tavg, everything(), -contains('.x'), -contains('.y'))
 
 
-## aad to merge ##
+## aad to merge (has optimal temps) ##
 aad <- read.csv("~/MacDonald-REU-Summer-22-1/models/data/aad.csv") %>%
-  select(-c(Muni_TotalArea, Chikungunya:Zika, Precip, Population, LST_Day, LST_Night, AvgRad, SWOccurrence, pland_forest:Nonveg_Riverlakeocean)) # add in updated LandscapeMetrics_v4
+  select(-c(pland_forest:Nonveg_Riverlakeocean, Chikungunya:Zika, SWOccurrence, Muni_TotalArea))
 
 old_colombia <- aad %>%
   filter(Country == "Colombia")
@@ -507,49 +507,74 @@ old_brazil <- aad %>%
 old_peru <- aad %>%
   filter(Country == "Peru")
 
-# Combine Colombia
-colombia_combined <- full_colombia_env_vars_v2 %>%
-  full_join(old_colombia, by = c("Code", "Year", "Country",
-                                 'NDVI', 'EVI',
-                                 'StableLights')) %>% # Use fill()
-  group_by(Country) %>%
-  arrange(Code, Year) %>%
-  group_by(Code, Year, Country) %>%
-  fill(everything(), .direction = 'up') %>%
-  unique() %>%
-  filter(row_number() == 1) %>%
-  ungroup()
 
-# Combine Brazil
-brazil_combined <- full_brazil_env_vars_v2 %>%
-  full_join(old_brazil, by = c("Code", "Year", "Country",
-                               'NDVI', 'EVI',
-                               'StableLights')) %>% # Use fill()
-  group_by(Country) %>%
-  arrange(Code, Year) %>%
-  group_by(Code, Year, Country) %>%
-  fill(everything(), .direction = 'downup') %>%
-  unique() %>%
-  ungroup()
+coalesce_join <- function(x, y,
+                          by = NULL, suffix = c(".x", ".y"),
+                          join = dplyr::full_join, ...) {
+  joined <- join(x, y, by = by, suffix = suffix, ...)
+  # names of desired output
+  cols <- union(names(x), names(y))
 
-# Combine Peru
-peru_combined <- full_peru_env_vars_v2 %>%
-  full_join(old_peru, by = c("Code", "Year", "Country",
-                             'NDVI', 'EVI',
-                             'StableLights')) %>% # Use fill()
-  group_by(Country) %>%
-  arrange(Code, Year) %>%
-  group_by(Code, Year, Country) %>%
-  fill(everything(), .direction = 'up') %>%
-  unique() %>%
-  filter(row_number() == 1) %>%
-  ungroup()
+  to_coalesce <- names(joined)[!names(joined) %in% cols]
+  suffix_used <- suffix[ifelse(endsWith(to_coalesce, suffix[1]), 1, 2)]
+  # remove suffixes and deduplicate
+  to_coalesce <- unique(substr(
+    to_coalesce,
+    1,
+    nchar(to_coalesce) - nchar(suffix_used)
+  ))
+
+  coalesced <- purrr::map_dfc(to_coalesce, ~dplyr::coalesce(
+    joined[[paste0(.x, suffix[1])]],
+    joined[[paste0(.x, suffix[2])]]
+  ))
+  names(coalesced) <- to_coalesce
+
+  dplyr::bind_cols(joined, coalesced)[cols]
+}
+
+colombia_combined <- coalesce_join(full_colombia_env_vars_v2, old_colombia, by=c("Code", "Year", "Country"))
+brazil_combined <- coalesce_join(full_brazil_env_vars_v2, old_brazil, by=c("Code", "Year", "Country"))
+peru_combined <- coalesce_join(full_peru_env_vars_v2, old_peru, by=c("Code", "Year", "Country"))
+
+
+# # Combine Colombia
+# colombia_combined <- full_colombia_env_vars_v2 %>%
+#   left_join(old_colombia, by = c("Code", "Year", "Country"), keep=F) %>% # Use fill()
+#   group_by(Country) %>%
+#   arrange(Code, Year) %>%
+#   group_by(Code, Year, Country) %>%
+#   fill(everything(), .direction = 'up') %>%
+#   distinct() %>%
+#   filter(row_number() == 1) %>%
+#   ungroup()
+#
+# # Combine Brazil
+# brazil_combined <- full_brazil_env_vars_v2 %>%
+#   full_join(old_brazil, by = c("Code", "Year", "Country")) %>% # Use fill()
+#   group_by(Country) %>%
+#   arrange(Code, Year) %>%
+#   group_by(Code, Year, Country) %>%
+#   fill(everything(), .direction = 'downup') %>%
+#   distinct() %>%
+#   ungroup()
+#
+# # Combine Peru
+# peru_combined <- full_peru_env_vars_v2 %>%
+#   full_join(old_peru, by = c("Code", "Year", "Country")) %>% # Use fill()
+#   group_by(Country) %>%
+#   arrange(Code, Year) %>%
+#   group_by(Code, Year, Country) %>%
+#   fill(everything(), .direction = 'up') %>%
+#   distinct() %>%
+#   filter(row_number() == 1) %>%
+#   ungroup()
 
 aad_v2 <- colombia_combined %>%
   rbind(brazil_combined) %>%
   rbind(peru_combined)
 
-# saveRDS(aad_v2, "~/peregrine_amazon/data/wrangling/aad_v2.rds")
+# saveRDS(aad_v2, "~/peregrine_amazon/data/wrangling/aad_v2.rds") dim: 202511     51
 aad_v2 <- readRDS("~/peregrine_amazon/data/wrangling/aad_v2.rds")
 
 ##         ##
@@ -586,7 +611,7 @@ SWO <- read.csv("~/peregrine_amazon/data/SWOccurrence/SWOccurrence.csv") %>%
 # create names dictionary
 aad_names <- aad %>%
   select(Name, Code, Country) %>%
-  unique() %>%
+  distinct() %>%
   mutate(Name = str_to_sentence(Name, locale='es')) %>%
   tibble()
 
@@ -598,7 +623,8 @@ aad_names <- readRDS("~/peregrine_amazon/data/wrangling/aad_names.rds") %>%
 
 aad_v2 <- readRDS("~/peregrine_amazon/data/wrangling/aad_v2.rds")
 HNTL <- readRDS("~/peregrine_amazon/data/wrangling/HNTL.rds")
-disease <- read.csv("~/network-storage/AmazonMalaria/Data/1_DataProcessing/Disease/annual_incidence_wide.csv")
+disease <- read.csv("~/network-storage/AmazonMalaria/Data/1_DataProcessing/Disease/annual_incidence_wide.csv") %>%
+  select(-Population)
 all_precip_super <- readRDS("~/peregrine_amazon/data/wrangling/all_precip_super.rds")
 LandscapeMetrics_v4_classmetrics <- read.csv("~/peregrine_amazon/data/wrangling/LandscapeMetrics_v4_classmetrics.csv") %>%
   select(-c(X.NA.)) %>%
@@ -611,7 +637,7 @@ SWO <- read.csv("~/peregrine_amazon/data/SWOccurrence/SWOccurrence.csv") %>%
   select(-c(system.index, .geo, max_extent, transition))
 
 # Elevation
-Elevation <- read.csv("~/peregrine_amazon_nogit/data/Elevation/Elevation.csv") %>%
+Elevation <- read.csv("~/peregrine_amazon/data/Elevation/Elevation_full.csv") %>%
   select(-c(system.index, .geo)) %>%
   rename(max_Elevation = max,
          min_Elevation = min,
@@ -619,8 +645,12 @@ Elevation <- read.csv("~/peregrine_amazon_nogit/data/Elevation/Elevation.csv") %
          var_Elevation = variance)
 
 aad_v3 <- aad_v2 %>%
+  mutate(Name = str_to_sentence(Name)) %>%
   left_join(HNTL, by = c("Code" = "MuniCode", "Year")) %>% # join with HNTL
-  full_join(disease, by = c("Code", "Year", "Country", "Population", "Name")) %>%
+  group_by(Code) %>%
+  fill(Name, .direction = "down") %>%
+  ungroup() %>%
+  full_join(disease, by = c("Code", "Year", "Country", "Name")) %>%
   full_join(all_precip_super, by = c("Code", "Year", "Country")) %>%
   full_join(LandscapeMetrics_v4_classmetrics, by = c("Code"="Muni_ID", "Country", "Year")) %>% # merge with LandscapeMetrics_v4 dfs
   full_join(LandscapeMetrics_v4_adjacency_matrix, by = c("Code"="Muni_ID", "Country", "Year")) %>%
@@ -637,11 +667,16 @@ aad_v3 <- aad_v2 %>%
          LST_Night, min_LST_Night, max_LST_Night,
          HNTL, StableLights, AvgRad, Precip,
          Evap_tavg, Qair_f_tavg, SoilMoi00_10cm_tavg, Wind_f_tavg,
-         Tair_f_tavg, everything())
+         Tair_f_tavg, everything()) %>%
+  group_by(Code, Year, Country) %>%
+  fill(everything(), .direction = 'down') %>%
+  distinct() %>%
+  filter(row_number() == 1) %>%
+  ungroup()
 
-# saveRDS(aad_v3, "~/peregrine_amazon/data/annual/aad_2021_full.rds")
+# saveRDS(aad_v3, "~/peregrine_amazon/data/annual/aad_2021_full.rds") # DO NOT TOUCH ANYMORE; 5/25/23
 
-aad_v3 <- readRDS("~/peregrine_amazon/data/annual/aad_2021_full.rds") # dim: 265711    508
+aad_v3 <- readRDS("~/peregrine_amazon/data/annual/aad_2021_full.rds") # dim: 200224    512
 
 # merge with spatial folds data set from folds_wrangling.R
 folds <- readRDS("~/peregrine_amazon/Restructured021623/binary_classification/random_forest/model_data/st/1/spatial_leave_location_out_cv_k3_hclust_data_splits_dict.rds")
@@ -660,10 +695,10 @@ aad_v4 <- aad_v3 %>%
     edge_loss = te_forest - lag(te_forest)
   ) %>%
   mutate(Country = as.factor(Country)) %>%
-  filter(!is.na(forest_density)) %>% # subset to rows that have forest variables recorded
-  unique()
+  # filter(!is.na(forest_density)) %>% # subset to rows that have forest variables recorded
+  distinct()
 
-# saveRDS(aad_v4, "~/peregrine_amazon/data/wrangling/aad_v4.rds") #dim: 64179   512
+saveRDS(aad_v4, "~/peregrine_amazon/data/wrangling/aad_v4.rds") #dim: 200224    516
 
 # Get lat, long, and other forest variables
 ## Get geometries of municipalities
@@ -690,13 +725,15 @@ aad_v5 <- aad_v4 %>%
   mutate(Country = as.factor(Country)) %>%
   st_set_geometry(.$geometry)
 
-saveRDS(aad_v5, "~/network-storage/AmazonMalaria/Data/1_DataProcessing/DF/aad_2021_forests_geom.rds")  # dim: 64179   515
+
+
+saveRDS(aad_v5, "~/network-storage/AmazonMalaria/Data/1_DataProcessing/DF/aad_2021_forests_geom.rds")  # dim: 200224    519
 
 
 aad_v6 <- aad_v5 %>%
   st_drop_geometry()
 
-saveRDS(aad_v6, "~/peregrine_amazon/data/annual/aad_2021_forests.rds")  # dim: 64179   514
+saveRDS(aad_v6, "~/peregrine_amazon/data/annual/aad_2021_forests.rds")  # dim: 200224    518
 write.csv(aad_v6, "~/network-storage/AmazonMalaria/Data/1_DataProcessing/DF/aad_2021_forests.csv")
 
 
@@ -764,7 +801,7 @@ var_names <- intersect(names(aad_v6), names(old_aad))
 codes <- intersect(aad_v6$Code, old_aad$Code)
 
 aad_v6_subset <- aad_v6 %>%
-  select(all_of(var_names), CL, forest_density) %>%
+  select(all_of(var_names), forest_density) %>%
   rename(pland_forest=forest_density) %>%
   filter(Code %in% codes) %>%
   filter(Year < 2020) %>% # Year 2021 not included in old_aad
@@ -773,13 +810,11 @@ aad_v6_subset <- aad_v6 %>%
   ungroup()
 
 old_aad_subset <- old_aad %>%
-  select(all_of(var_names), CL=Cutaneous.Leishmaniasis, pland_forest=pland_forest) %>%
+  select(all_of(var_names), pland_forest=pland_forest) %>%
   filter(Code %in% codes) %>%
   filter(Year > 2000) %>% # Year 2000 not included in aad_v6 since no CL was reported
   group_by(Code, Year) %>%
   arrange(Code, .by_group = T) %>%
-  filter(!is.na(CL)) %>%
-
   ungroup()
 
 old_aad_subset_summarized <- old_aad_subset %>%
