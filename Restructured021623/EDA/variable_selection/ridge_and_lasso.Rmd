@@ -327,7 +327,7 @@ enet.train_control <- trainControl(
   method="repeatedcv",
   number=5,
   repeats=5,
-  search="random",
+  search="grid",
   verboseIter=T,
   classProbs=T
 )
@@ -348,14 +348,14 @@ enet.mod <- train(
   na.action=na.omit,
   importance=T,
   summaryFunction=twoClassSummary,
-  me
+  metric="Kappa"
 )
 ```
 #### Make predictions on data set
 
 ```{r}
 enet.pred_train <- predict(enet.mod, full.datrain, na.action=na.pass) %>% 
-  as.integer()
+  as.integer() 
 eval_results(full.datrain$CL, enet.pred_train)
 
 enet.pred_test <- predict(enet.mod, full.datest, na.action=na.pass) %>% 
