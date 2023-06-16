@@ -1,0 +1,401 @@
+---
+title: "MDD Population Analysis"
+author: "TJ Sipin"
+date: "2023-06-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(raster)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(rgl)
+library(mgcv)
+library(tidyr)
+```
+
+## Raster data
+
+```{r data}
+pop = raster("~/peregrine_amazon/MDD/pop_region_mosaic.tif")
+pop_df = pop %>% 
+  raster::as.data.frame() %>% 
+  mutate(long = raster::coordinates(pop)[,1],
+         lat = raster::coordinates(pop)[,2]) %>% 
+  filter(!is.na(population))
+localities = read.csv("~/peregrine_amazon/MDD/FINAL_ranked_filtered.csv") %>% 
+  dplyr::select(Locality, Longitude, Latitude) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"))
+```
+
+### Visualize data
+
+```{r visualize}
+ggplot() +
+  geom_raster(pop_df, mapping = aes(
+    x=long, 
+    y=lat, 
+    fill=population)) +
+  geom_sf(data = localities)
+```
+
+```{r}
+ggplot(pop_df) +
+  geom_point(aes(x = long, y = lat, size = population)) +
+  scale_size(range = c(min(pop_df$population), max(pop_df$population)))
+```
+
+
+```{r}
+plotly = plot_ly(
+  data = pop_df,
+  type = "surface"
+)
+
+plotly
+
+
+plot3d(
+  x=pop_df$long, y=pop_df$lat, z=pop_df$population
+) %>% 
+  scene3d() %>% 
+  rglwidget()
+```
+
+```{r}
+pop_500 = raster("~/peregrine_amazon/MDD/tif/pop_region_500.tif")
+pop_500_df = pop_500 %>% 
+  raster::as.data.frame() %>% 
+  mutate(long = raster::coordinates(pop_500)[,1],
+         lat = raster::coordinates(pop_500)[,2]) %>% 
+  filter(!is.na(population))
+localities = read.csv("~/peregrine_amazon/MDD/FINAL_ranked_filtered.csv") %>% 
+  dplyr::select(Locality, Longitude, Latitude) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"))
+```
+
+```{r visualize 500}
+ggplot() +
+  geom_raster(pop_500_df, mapping = aes(
+    x=long, 
+    y=lat, 
+    fill=log(population))) +
+  geom_sf(data = localities, color='red', cex=0.3)
+```
+
+```{r}
+plotly = plot_ly(
+  data = pop_500_df,
+  x = ~long,
+  y = ~lat,
+  z = ~log(population),
+  type = "surface"
+) 
+
+plotly_mesh3d = plot_ly(
+  data = pop_500_df %>% 
+    filter(population > 0.1),
+  x = ~long,
+  y = ~lat,
+  z = ~log(population),
+  type = "mesh3d"
+) 
+
+plotly_scatter_surface = plot_ly(
+  data = pop_500_df,
+  x = ~long,
+  y = ~lat,
+  z = ~log(population),
+  type='scatter3d',
+  mode="lines"
+) %>% 
+  add_surface()
+```
+
+```{r}
+(ggplot(pop_500_df) +
+  geom_contour(aes(x = long, y = lat,
+                   z = log(population)))) %>% 
+  ggplotly()
+```
+
+
+
+#### 1000 m/pix
+
+```{r}
+pop_1000 <- raster("~/peregrine_amazon/MDD/tif/pop_region_1000.tif")
+pop_1000_df <- pop_1000 %>% 
+  as.data.frame() %>% 
+  mutate(long = raster::coordinates(pop_1000)[,1],
+         lat = raster::coordinates(pop_1000)[,2]) %>% 
+  filter(!is.na(population))
+```
+
+
+```{r}
+(
+  ggplot() +
+    geom_contour(data = pop_1000_df,
+                 aes(x = long, y = lat,
+                   z = log(population)),
+                 bins = 17) +
+    geom_sf(data = localities, color = 'red', cex = 0.6)
+) %>% 
+  ggplotly()
+```
+
+```{r}
+plot_ly(data = pop_1000_df,
+       x = ~long, y = ~lat, z = ~log(population),
+       type = "contour") %>%
+  add_trace(x = ~st_coordinates(localities)[,1], y = ~st_coordinates(localities)[,2], type = "scatter")
+```
+
+
+
+```{r}
+library(sp)
+library(rgdal)
+library(geosphere)
+xy <- SpatialPointsDataFrame(
+  coords = cbind(pop_1000_df$long, pop_1000_df$lat), 
+  data = pop_1000_df,
+  proj4string=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
+)
+
+mdist <- dist(pop_1000_df)
+
+hc <- hclust(mdist)
+
+plot(hc)
+```
+
+Let $x = \text{long}$ and $y = \text{lat}$
+
+$$
+f(x,y) = \text{population} = f(\text{long}, \text{lat}) \\
+$$
+
+Find $f(x)$.
+
+```{r}
+# 268 localities
+pop_gam_268 <- mgcv::gam(log(population) ~ s(long, k = 268) + s(lat, k = 268), data = pop_1000_df)
+
+summary(pop_gam_268)
+
+plot(pop_gam_268)
+
+pop_gam_268$coefficients
+
+pop_gam_268 %>% gam.check()
+
+# smoother gam (k = 19, 16) for use in GEE as cutoff points
+pop_gam_20 <- mgcv::gam(log(population) ~ s(long, k = 20) + s(lat, k = 20) + s(long, lat, fx = T), data = pop_1000_df)
+
+summary(pop_gam_20)
+
+pop_gam_20 %>% gam.check()
+
+pop_gam_coef <- pop_gam_20$coefficients %>% 
+  as.data.frame() %>% 
+  rename(coef = ".") %>% 
+  mutate(term = rownames(.))
+
+pop_gam_20$linear.predictors
+
+fitted(pop_gam_20)
+
+fitted_pop_df <- pop_1000_df %>% 
+  mutate(fitted = exp(pop_gam_20$fitted.values)) %>% 
+  select(-population) 
+
+fitted_pop_sf <-
+  SpatialPointsDataFrame(
+    coords = cbind(fitted_pop_df$long, fitted_pop_df$lat), 
+    data = fitted_pop_df,
+    proj4string=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
+  ) %>% 
+  sf::st_as_sf()
+
+fitted_pop_raster <- (raster(crs = "+proj=longlat +datum=WGS84", ext = extent(fitted_pop_sf)) %>% 
+  rasterize(fitted_pop_sf, .)) %>% 
+  raster::as.array()
+
+colnames(fitted_pop_raster) <- c("long", "lat", "limit")
+
+## Find the maximum value within the 9-cell neighborhood of each cell
+b <- brick(fitted_pop_raster)
+r <- raster(fitted_pop_sf, crs = "+proj=longlat +datum=WGS84") 
+f <- function(X) max(X, na.rm=TRUE)
+ww <- matrix(1, nrow=3, ncol=3) ## Weight matrix for cells in moving window
+localmax <- focal(b[[4]], fun=f, w=ww, pad=TRUE, padValue=NA) # b[[4]] takes the fourth layer of the raster
+
+r2 <- b[[4]]==localmax
+
+## Get x-y coordinates of those cells that are local maxima
+maxXY <- xyFromCell(r2, Which(r2==1, cells=TRUE))
+
+
+plot(b[[4]]) 
+plot(r2) 
+
+## TODO: overlay localities over maxima
+
+tiff::writeTIFF(fitted_pop_raster, "~/peregrine_amazon/MDD/tif/fitted_pop.tif")
+
+fitted_pop_tif <- tiff::readTIFF("~/peregrine_amazon/MDD/tif/fitted_pop.tif")
+
+(
+  ggplot(data = fitted_pop_tif %>% data.frame() %>% 
+         rename(long = X1, lat = X2, fitted = X3)) +
+    geom_raster(aes(x = long, y = lat))
+) %>% 
+  ggplotly()
+```
+
+```{r}
+# rasterize based on geometry and a column named "value". Change the name of this column if necessary
+r.fitted <- stars::st_rasterize(fitted_pop_sf %>% dplyr::select(fitted, geometry))
+
+# export as tiff
+stars::write_stars(r.fitted, "~/peregrine_amazon/MDD/tif/fitted_pop.tif")
+
+plot(r.fitted)
+```
+
+```{r}
+pop_gam_10 <- mgcv::gam(log(population) ~ s(long, k = 10) + s(lat, k = 10) + s(long, lat, fx = T), data = pop_1000_df)
+
+summary(pop_gam_10)
+
+plot(pop_gam_10)
+
+pop_gam_10 %>% gam.check()
+
+pop_gam_coef <- pop_gam_10$coefficients %>% 
+  as.data.frame() %>% 
+  rename(coef = ".") %>% 
+  mutate(term = rownames(.))
+
+pop_gam_10$linear.predictors
+
+fitted(pop_gam_10)
+
+fitted_pop_df <- pop_1000_df %>% 
+  mutate(fitted = exp(pop_gam_10$fitted.values)) %>% 
+  select(-population) 
+
+fitted_pop_sf <-
+  SpatialPointsDataFrame(
+    coords = cbind(fitted_pop_df$long, fitted_pop_df$lat), 
+    data = fitted_pop_df,
+    proj4string=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
+  ) %>% 
+  sf::st_as_sf()
+
+fitted_pop_raster <- (raster(crs = "+proj=longlat +datum=WGS84", ext = extent(fitted_pop_sf)) %>% 
+  rasterize(fitted_pop_sf, .) %>% 
+  raster::as.matrix())[, 2:4]
+
+colnames(fitted_pop_raster) <- c("long", "lat", "limit")
+
+
+ggplot(data = fitted_pop_tif %>% data.frame() %>% 
+         rename(long = X1, lat = X2, fitted = X3)) +
+  geom_raster(aes(x = long, y = lat))
+
+# rasterize based on geometry and a column named "value". Change the name of this column if necessary
+r.fitted <- stars::st_rasterize(fitted_pop_sf %>% dplyr::select(fitted, geometry))
+
+# export as tiff
+stars::write_stars(r.fitted, "~/peregrine_amazon/MDD/tif/fitted_pop_10.tif")
+
+plot(r.fitted)
+```
+
+
+
+
+```{r knn}
+library(tidymodels)
+library(rsample)
+localities_pop <- localities %>% 
+  as.data.frame() %>% 
+  mutate(long = sf::st_coordinates(localities)[,1],
+         lat = sf::st_coordinates(localities)[,2]) %>% 
+  st_drop_geometry() %>% 
+  mutate(population = 0) %>% 
+  select(long, lat, population) %>% 
+  distinct()
+
+pop_1000_localities <- rbind(pop_1000_df, localities_pop)
+
+split <- initial_split(pop_1000_localities)
+datrain <- training(split)
+datest <- testing(split)
+
+kclust <- kmeans(datrain, centers = datrain %>% filter(population == 0), iter.max = 100)
+```
+
+
+```{r}
+datrain_aug <- augment(kclust, datrain)
+
+# kclust_centers <- SpatialPointsDataFrame(
+#   coords = cbind(kclust$centers[,'long'], kclust$centers[,'lat']), 
+#   data = kclust$centers %>% as.data.frame(),
+#   proj4string=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
+# ) %>% st_set_geometry(value = geometry(kclust_centers))
+
+
+kclust_centroids <- st_as_sf(kclust$centers %>% as.data.frame(), coords = c("long", "lat"))
+
+ggplot() +
+  geom_point(data = datrain_aug,
+             aes(x = long, y = lat, color = .cluster)) +
+  theme(legend.position = "none")
+
+
+(
+  ggplot() + 
+  geom_point(data = datrain_aug,
+             aes(x = long, y = lat, color = .cluster)) +
+  geom_sf(data = kclust_centroids) +
+  theme(legend.position = 'none')
+) %>% 
+  ggplotly()
+```
+
+
+```{r}
+# all
+all_kclust <- kmeans(pop_1000_localities, centers = pop_1000_localities %>% filter(population == 0), iter.max = 100)
+
+all_aug <- augment(all_kclust, pop_1000_localities)
+
+all_kclust_centroids <- st_as_sf(all_kclust$centers %>% as.data.frame(), coords = c("long", "lat"))
+
+
+(
+  ggplot() + 
+    geom_point(data = all_aug,
+               aes(x = long, y = lat, color = .cluster)) +
+    geom_sf(data = all_kclust_centroids, color = 'blue') + 
+    geom_sf(data = localities, color = 'red') +
+    theme(legend.position = 'none')
+) 
+
+
+
+all_aug %>% arrange(.cluster)
+
+all_aug %>% group_by(.cluster) %>% summarise(n = n()) %>% ungroup() %>% arrange(n)
+
+all_aug %>% group_by(.cluster) %>% filter(population == max(population)) %>% ungroup() %>% arrange(.cluster)
+```
+

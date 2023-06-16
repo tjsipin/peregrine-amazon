@@ -1,0 +1,221 @@
+```{r}
+# packages
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(mapview)
+library(stringr)
+library(spanish)
+
+raw_data <- read.csv("~/peregrine_amazon/data/MDD/MDD_2000_2022.csv", encoding = 'UTF-8') %>%
+  select(Year = ANO,
+         Week = SEMANA,
+         Code = UBIGEO,
+         LocalCode = LOCALCOD,
+         Locality = LOCALIDAD,
+         Department = DPTO,
+         Province = PROVINCIA,
+         District = DISTRITO,
+         Age = EDAD,
+         Age_Type = TIPO_EDAD,
+         Sex = SEXO,
+         Diagnosis = DIAGNOSTIC)
+
+sapply(raw_data, unique)
+
+
+
+# get code/muni dictionary to get names
+code_muni_dict <- readRDS("~/peregrine_amazon/data/wrangling/aad_names.rds") %>% 
+  select(-Country)
+
+# geom dict
+# geom_dict <- read_sf("~/peregrine_amazon/data/peru/shapefiles/Final_Peru_Amazonian_Municipios_Projected.shp") %>% 
+#   select(IDDIST) %>% 
+#   mutate(IDDIST = as.integer(IDDIST))
+
+# get disease dictionary
+disease_dict <- read.csv("~/peregrine_amazon/data/MDD/disease_clave.csv")
+
+# get population dictionary
+population <- readRDS("~/peregrine_amazon/data/peru/processed/final/annual/full_peru_population_00_processed_annual") %>% 
+  select(-Country)
+
+data <- raw_data %>% 
+  left_join(code_muni_dict, by = "Code") %>%
+  # left_join(geom_dict, by = c("Code"="IDDIST")) %>% 
+  left_join(disease_dict, by = c('Diagnosis' = "CIE.10")) %>% 
+  left_join(population, by = c("Code"="MuniCode", "Year"))
+
+
+annual_data <- data %>% 
+  group_by(Code, Name, Locality, LocalCode, Year, Enfermedad, Province, District, Population) %>% 
+  summarise(Cases = n()) %>% 
+  arrange(Year) %>% 
+  ungroup() %>% 
+  select(Code, Name, Locality, LocalCode, Year, Cases, Enfermedad, Province, District, Population) %>% 
+  mutate(Incidence = Cases/Population) %>% 
+  filter(!is.na(Enfermedad)) %>% 
+  tidyr::pivot_wider(names_from = 'Enfermedad', values_from = 'Incidence', values_fill = 0) 
+
+localities <- data %>% 
+  mutate(Locality = case_when(LocalCode == 1703010001 ~ "INAPARI",
+                              .default = Locality),
+         Locality = str_replace(Locality, "")) %>% 
+  select(Locality, District, Province) %>% 
+  unique() %>% 
+  filter(Locality != '')
+
+write.csv(localities, '~/peregrine_amazon/MDD/MDD_localities.csv')
+
+
+
+# to use in GEE to get shapefiles
+print(paste0("['", paste0(annual_data$Code %>% unique() %>% sort(), collapse = "' , '"), "']"))
+```
+
+```{r}
+coords <- read.csv("~/peregrine_amazon/MDD/coordinate_df.csv") %>% 
+  select(-X)
+
+
+raw_data %>% filter(Locality %in% filter(coords, is.na(Longitude))$Locality) %>% select(Locality, LocalCode, Code, Department, Province, District) %>% unique()
+```
+
+
+```{r}
+# locality codes from https://www.inei.gob.pe/media/MenuRecursivo/publicaciones_digitales/Est/Lib1541/index.htm
+locality_dict <- read.csv("~/peregrine_amazon/MDD/dpto17.csv", skip = 2)
+
+colnames(locality_dict) <- c("LocalCode", "Locality", "Region", "Altitude", "Population", "Male Population", "Female Population", "Private Homes", "Occupied Homes", "Unoccupied Homes", "Code", "District")
+
+locality_dict_df <- locality_dict %>% 
+  select(-c(3,6:10)) %>% 
+  mutate(LocalCode = str_pad(LocalCode, width = 4, side = "left", pad = "0"),
+         Code = as.character(Code),
+         LocalCode = paste0(Code, LocalCode))
+
+write.csv(locality_dict_df, "~/peregrine_amazon/MDD/locality_dict.csv")
+
+dup_loc <- locality_dict_df %>% 
+  select(Locality, District) %>% 
+  distinct() %>% 
+  filter(duplicated(Locality)) %>% 
+  select(Locality)
+
+locality_dict_df %>% 
+  select(Locality, District) %>% 
+  distinct() %>% 
+  filter(Locality %in% dup_loc$Locality) %>% 
+  arrange(Locality)
+```
+
+```{r}
+locality_dict_df %>% select(Locality, District) %>% mutate(key = paste0(Locality, "_", District), duplicated = duplicated(key)) %>% filter(duplicated)
+```
+```{r}
+location_df <- read.csv("~/peregrine_amazon/MDD/location_df.csv", row.names = "X") %>% 
+  mutate(Place_Name = gsub("\"", "", Place_Name) %>% str_to_upper()) %>% 
+  mutate(Admin_Name_3 = case_when(Admin_Name_3 == "\"I\\u00f1apari\"" ~ "IÑAPARI",
+                                  Admin_Name_3 == "\"Man\\u00fa\"" ~ "MANU",
+                                  Admin_Name_3 == "\"Tahuaman\\u00fa\"" ~ "TAHUAMANU",
+                                  .default = gsub("\"", "", Admin_Name_3) %>% str_to_upper())) %>% 
+  mutate(loc_pl = Locality == Place_Name,
+         Dist_Adm3 = District == Admin_Name_3)
+
+location_df %>% 
+  filter(duplicated(Locality),
+         Locality == Place_Name) 
+
+location_df %>% 
+  filter(duplicated(Locality),
+         Locality != Place_Name) 
+
+location_df %>% 
+  filter(!duplicated(Locality),
+         Locality != Place_Name) 
+
+location_df %>% 
+  filter(!duplicated(Locality),
+         Locality == Place_Name) 
+
+local_eq_place <- location_df %>% 
+  filter(loc_pl) %>% 
+  group_by(Locality, Place_Name, Admin_Name_3) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  select(Locality, Place_Name, District, Admin_Name_3, Dist_Adm3, everything())
+
+local_neq_place <- location_df %>% 
+  filter(Locality != Place_Name)
+
+local_eq_place %>% filter(duplicated(Locality)) %>% arrange(Locality)
+
+local_neq_place %>% select(Locality, District) %>% unique()
+
+dup_loc <- location_df %>% 
+  select(Locality, District) %>% 
+  distinct() %>% 
+  filter(duplicated(Locality)) %>% 
+  select(Locality)
+
+# filter method drafts
+
+# filter method 1
+location_df %>% 
+  filter(Locality %in% dup_loc$Locality) %>% 
+  select(Locality, Place_Name, District, Admin_Name_3, Dist_Adm3, everything()) %>% 
+  arrange(Locality) %>% 
+  group_by(Locality, Place_Name) %>% 
+  filter(sum(!Dist_Adm3)>0)
+
+# filter method 2
+# location_df %>%
+#   select(Locality, Place_Name, District, Admin_Name_3, Dist_Adm3, loc_pl, everything()) %>%
+#   arrange(Locality) %>%
+#   group_by(Locality, District) %>%
+#   # get locality-district groups such that there are rows with mismatching district-admin3 OR mismatching locality-place_names
+#   filter((sum(!Dist_Adm3) > 0 | sum(!loc_pl) > 0)) %>%
+#   # get single best row? how to rank which is best?
+#   # (Dist_adm3 == T & loc_pl == T) ~ 1
+#   # (Dist_adm3 == F & loc_pl == T) ~ 2
+#   # (Dist_adm3 == T & loc_pl == F) ~ 3
+#   # (Dist_adm3 == F & loc_pl == F) ~ 4 (remove these obs)
+#   mutate(select_rank = case_when(
+#     ((Dist_Adm3 == T) & (loc_pl == T)) ~ 1,
+#     ((Dist_Adm3 == T) & (loc_pl == F)) ~ 2,
+#     ((Dist_Adm3 == F) & (loc_pl == T)) ~ 3,
+#     ((Dist_Adm3 == F) & (loc_pl == F)) ~ 4
+#     )
+#   ) %>%
+#   ungroup() %>%
+#   # hand-choose the right ones in csv-editing software
+#   write.csv("~/peregrine_amazon/MDD/ranked_locs.csv")
+
+ranked_filtered <- read.csv("~/peregrine_amazon/MDD/ranked_locs.csv") %>% 
+  select(-X) %>% 
+  # rbind with other rows that are good to go
+  rbind(
+    location_df %>% 
+      select(Locality, Place_Name, District, Admin_Name_3, Dist_Adm3, loc_pl, everything()) %>%
+      arrange(Locality) %>%
+      group_by(Locality, District) %>%
+      # get locality-district groups such that there are rows with mismatching district-admin3 OR mismatching locality-place_names
+      mutate(select_rank = case_when(
+        ((Dist_Adm3 == T) & (loc_pl == T)) ~ 1,
+        ((Dist_Adm3 == T) & (loc_pl == F)) ~ 2,
+        ((Dist_Adm3 == F) & (loc_pl == T)) ~ 3,
+        ((Dist_Adm3 == F) & (loc_pl == F)) ~ 4
+        )
+      ) %>%
+      filter(select_rank == 1) %>% 
+      ungroup()
+  ) %>% 
+  group_by(Locality, Place_Name, District, Admin_Name_3) %>% 
+  filter(Accuracy == max(Accuracy),
+         row_number() == 1) %>% 
+  ungroup()
+
+write.csv(ranked_filtered, "~/peregrine_amazon/MDD/FINAL_ranked_filtered.csv")
+```
+

@@ -1,0 +1,327 @@
+---
+title: "MDD Locality Coordinates (FINAL)"
+author: "TJ Sipin"
+date: "2023-06-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/peregrine_amazon/data/MDD/")
+```
+
+```{r}
+# packages
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(mapview)
+library(stringr)
+library(spanish)
+
+raw_data <- read.csv("MDD_2000_2022.csv", encoding = 'UTF-8') %>%
+  select(Year = ANO,
+         Week = SEMANA,
+         Code = UBIGEO,
+         LocalCode = LOCALCOD,
+         Locality = LOCALIDAD,
+         Department = DPTO,
+         Province = PROVINCIA,
+         District = DISTRITO,
+         Age = EDAD,
+         Age_Type = TIPO_EDAD,
+         Sex = SEXO,
+         Diagnosis = DIAGNOSTIC)
+
+sapply(raw_data, unique)
+
+
+# get code/muni dictionary to get names
+code_muni_dict <- readRDS("aad_names.rds") %>% 
+  select(-Country)
+
+# get disease dictionary
+disease_dict <- read.csv("disease_clave.csv")
+
+# get population dictionary
+population <- readRDS("full_peru_population_00_processed_annual") %>% 
+  select(-Country)
+
+data <- raw_data %>% 
+  left_join(code_muni_dict, by = "Code") %>%
+  # left_join(geom_dict, by = c("Code"="IDDIST")) %>% 
+  left_join(disease_dict, by = c('Diagnosis' = "CIE.10")) %>% 
+  left_join(population, by = c("Code"="MuniCode", "Year"))
+
+
+annual_data <- data %>% 
+  group_by(Code, Name, Locality, LocalCode, Year, Enfermedad, Province, District, Population) %>% 
+  summarise(Cases = n()) %>% 
+  arrange(Year) %>% 
+  ungroup() %>% 
+  select(Code, Name, Locality, LocalCode, Year, Cases, Enfermedad, Province, District, Population) %>% 
+  mutate(Incidence = Cases/Population) %>% 
+  filter(!is.na(Enfermedad)) %>% 
+  tidyr::pivot_wider(names_from = 'Enfermedad', values_from = 'Incidence', values_fill = 0) 
+
+localities <- data %>% 
+  mutate(Locality = case_when(LocalCode == 1703010001 ~ "INAPARI",
+                              .default = Locality),
+         Locality = str_replace(Locality, "")) %>% 
+  select(Locality, District, Province) %>% 
+  unique() %>% 
+  filter(Locality != '')
+
+write.csv(localities, 'MDD_localities.csv')
+
+# to use in GEE to get shapefiles of municipalities (for sanity check)
+print(paste0("['", paste0(annual_data$Code %>% unique() %>% sort(), collapse = "' , '"), "']"))
+```
+
+
+```{r}
+# locality codes from https://www.inei.gob.pe/media/MenuRecursivo/publicaciones_digitales/Est/Lib1541/index.htm
+locality_dict <- read.csv("dpto17.csv", skip = 2)
+
+# rename column names from Spanish to English
+colnames(locality_dict) <- c("LocalCode", "Locality", "Region", "Altitude", "Population", "Male Population", "Female Population", "Private Homes", "Occupied Homes", "Unoccupied Homes", "Code", "District")
+
+# define usable locality dictionary dataframe
+locality_dict_df <- locality_dict %>% 
+  # remove unnecessary columns
+  select(-c(3,6:10)) %>% 
+  # format the locality codes from dpto17 to match with the annual MDD data locality codes
+  mutate(LocalCode = str_pad(LocalCode, width = 4, side = "left", pad = "0"),
+         Code = as.character(Code),
+         # concatenate the municipio code and nonspecific locality codes to create specific locality codes as seen in the annual MDD data
+         LocalCode = paste0(Code, LocalCode))
+
+write.csv(locality_dict_df, "locality_dict.csv")
+
+# get duplicated locality names with different district names
+dup_loc <- locality_dict_df %>% 
+  select(Locality, District) %>% 
+  distinct() %>% 
+  filter(duplicated(Locality)) %>% 
+  select(Locality)
+
+
+locality_dict_df %>% 
+  select(Locality, District) %>% 
+  distinct() %>% 
+  filter(Locality %in% dup_loc$Locality) %>% 
+  arrange(Locality)
+```
+
+```{r}
+# get duplicated locality-district pairs (there are more than one locality called x in district y)
+locality_dict_df %>% 
+  select(Locality, District) %>% 
+  mutate(key = paste0(Locality, "_", District), 
+         duplicated = duplicated(key)) %>% 
+  filter(duplicated)
+```
+
+```{python RAN IN FORGE (DO NOT RUN HERE)}
+# data from here: 
+# https://public.opendatasoft.com/explore/dataset/geonames-postal-code/information/?dataChart=eyJxdWVyaWVzIjpbeyJjb25maWciOnsiZGF0YXNldCI6Imdlb25hbWVzLXBvc3RhbC1jb2RlIiwib3B0aW9ucyI6eyJxIjoiQk9DQSBDT0xPUkFETyIsInJlZmluZS5jb3VudHJ5X2NvZGUiOiJQRSIsInJlZmluZS5hZG1pbl9uYW1lMSI6Ik1hZHJlIERlIERpb3MifX0sImNoYXJ0cyI6W3siYWxpZ25Nb250aCI6dHJ1ZSwidHlwZSI6ImNvbHVtbiIsImZ1bmMiOiJBVkciLCJ5QXhpcyI6ImxhdGl0dWRlIiwic2NpZW50aWZpY0Rpc3BsYXkiOnRydWUsImNvbG9yIjoiI0ZGNTE1QSJ9XSwieEF4aXMiOiJjb3VudHJ5X2NvZGUiLCJtYXhwb2ludHMiOjUwLCJzb3J0IjoiIn1dLCJ0aW1lc2NhbGUiOiIiLCJkaXNwbGF5TGVnZW5kIjp0cnVlLCJhbGlnbk1vbnRoIjp0cnVlfQ%3D%3D&refine.admin_name1=Madre+De+Dios&location=12,-12.6591,-70.38769&basemap=jawg.light
+import requests
+from bs4 import BeautifulSoup
+import numpy as np
+import pandas as pd
+import re
+
+latitude_array = np.array([])
+longitude_array = np.array([])
+
+locality_names = pd.read_csv(
+    "locality_dict.csv"
+)
+
+locality_array = np.array([])
+district_array = np.array([])
+place_array = np.array([])
+latitude_array = np.array([])
+longitude_array = np.array([])
+accuracy_array = np.array([])
+admin_name1_array = np.array([])
+admin_name2_array = np.array([])
+admin_name3_array = np.array([])
+
+for name in locality_names.index:
+    locality_name = locality_names.Locality[name].lower().replace(" ", "+")
+
+    query = "{}+{}".format(locality_name, locality_names.District[name].lower().replace(" ", "+"))
+
+    print(query)
+
+    r = requests.get(f"https://data.opendatasoft.com/api/records/1.0/search/?dataset=geonames-postal-code%40public&q={query}&facet=country_code&facet=admin_name1&facet=admin_code1&facet=admin_name2&refine.admin_name1=Madre+De+Dios")
+
+    # parse the HTML content of the search page
+    search_soup = BeautifulSoup(r.text, 'html.parser')
+
+    splits = re.split(r'("[^"]*":)\s|,\s|}', search_soup.text)
+
+    # get "latitude": locations in splits
+    latitude_locs = np.array([])
+
+    for i, j in enumerate(splits):
+        if j == '"latitude":': 
+            latitude_locs = np.append(latitude_locs, i)
+
+
+    # get "longitude": locations in splits
+    longitude_locs = np.array([])
+
+    for i, j in enumerate(splits):
+        if j == '"longitude":': 
+            longitude_locs = np.append(longitude_locs, i)
+
+    # get "place_name": locations in splits
+    place_locs = np.array([])
+
+    for i, j in enumerate(splits):
+        if j == '"place_name":': 
+            place_locs = np.append(place_locs, i)
+
+    # get "accuracy": locations in splits
+    accuracy_locs = np.array([])
+
+    for i, j in enumerate(splits):
+        if j == '"accuracy":': 
+            accuracy_locs = np.append(accuracy_locs, i)
+
+
+    # get "admin_name1" locations in splits
+    admin_name1_locs = np.array([])
+
+    for i, j in enumerate(splits):
+        if j == '"admin_name1":': 
+            admin_name1_locs = np.append(admin_name1_locs, i)
+
+    # get "admin_name2" locations in splits
+    admin_name2_locs = np.array([])
+
+    for i, j in enumerate(splits):
+        if j == '"admin_name2":': 
+            admin_name2_locs = np.append(admin_name2_locs, i)
+
+    # get "admin_name3" locations in splits
+    admin_name3_locs = np.array([])
+
+    for i, j in enumerate(splits):
+        if j == '"admin_name3":': 
+            admin_name3_locs = np.append(admin_name3_locs, i)
+
+    # append latitudes into latitude_array
+    for i in latitude_locs:
+        latitude_array = np.append(latitude_array, splits[int(i+1)])
+
+    # append longitudes into longitude_array
+    for i in longitude_locs:
+        longitude_array = np.append(longitude_array, splits[int(i+1)])
+
+    # append place_name into place_array
+    for i in place_locs:
+        place_array = np.append(place_array, splits[int(i+1)])
+
+    # append accuracy into accuracy_array
+    for i in accuracy_locs:
+        accuracy_array = np.append(accuracy_array, splits[int(i+1)])
+
+    # append admin_name1s into admin_name1_array
+    for i in admin_name1_locs:
+        admin_name1_array = np.append(admin_name1_array, splits[int(i+1)])
+
+    # append admin_name2s into admin_name2_array
+    for i in admin_name2_locs:
+        admin_name2_array = np.append(admin_name2_array, splits[int(i+1)])
+
+    # append admin_name3s into admin_name3_array
+    for i in admin_name3_locs:
+        admin_name3_array = np.append(admin_name3_array, splits[int(i+1)])
+
+    # append locality name into locality_array
+    for i in admin_name3_locs:
+        locality_array = np.append(locality_array, locality_names.Locality[name])
+        district_array = np.append(district_array, locality_names.District[name])
+
+print(
+    'locality: ', locality_array, '\n',
+    'district: ', district_array, '\n',
+    'place_name: ', place_array, '\n',
+    'lat: ', latitude_array, '\n',
+    'long: ', longitude_array, '\n',
+    'accuracy: ', accuracy_array, '\n',
+    'admin1: ', admin_name1_array, '\n',
+    'admin2: ', admin_name2_array, '\n',
+    'admin3: ', admin_name3_array)
+
+
+location_array = list(zip(locality_array, place_array, district_array, latitude_array, longitude_array, accuracy_array, admin_name1_array, admin_name2_array, admin_name3_array))
+
+location_df = pd.DataFrame(location_array, columns=["Locality", "Place_Name", "District", "Latitude", "Longitude", "Accuracy", "Admin_Name_1", "Admin_Name_2", "Admin_Name_3"])
+
+
+location_df.to_csv("location_df.csv")
+```
+
+```{r}
+# read in location_df.csv from Forge (GRIT cluster computing HPC box)
+location_df <- read.csv("location_df.csv", row.names = "X") %>% 
+  # format Place_Name to match Locality
+  mutate(Place_Name = gsub("\"", "", Place_Name) %>% str_to_upper()) %>% 
+  # format encoding for Admin_Name_3 and make them uppercase to match District 
+  mutate(Admin_Name_3 = case_when(Admin_Name_3 == "\"I\\u00f1apari\"" ~ "IÑAPARI",
+                                  Admin_Name_3 == "\"Man\\u00fa\"" ~ "MANU",
+                                  Admin_Name_3 == "\"Tahuaman\\u00fa\"" ~ "TAHUAMANU",
+                                  .default = gsub("\"", "", Admin_Name_3) %>% str_to_upper())) %>% 
+  # logical marker for if locality names and district names match for both data set sources
+  mutate(loc_pl = Locality == Place_Name,
+         Dist_Adm3 = District == Admin_Name_3)
+
+location_df %>%
+  select(Locality, Place_Name, District, Admin_Name_3, Dist_Adm3, loc_pl, everything()) %>%
+  arrange(Locality) %>%
+  group_by(Locality, District) %>%
+  # get locality-district groups such that there are rows with mismatching district-admin3 OR mismatching locality-place_names
+  filter((sum(!Dist_Adm3) > 0 | sum(!loc_pl) > 0)) %>%
+  # create ranks based on markers that are true
+  mutate(select_rank = case_when(
+    ((Dist_Adm3 == T) & (loc_pl == T)) ~ 1,
+    ((Dist_Adm3 == T) & (loc_pl == F)) ~ 2,
+    ((Dist_Adm3 == F) & (loc_pl == T)) ~ 3,
+    ((Dist_Adm3 == F) & (loc_pl == F)) ~ 4
+    )
+  ) %>%
+  ungroup() %>%
+  # hand-choose the right ones in csv-editing software
+  write.csv("ranked_locs.csv")
+
+ranked_filtered <- read.csv("ranked_filtered.csv") %>% 
+  select(-X) %>% 
+  # rbind with other rows that are good to go
+  rbind(
+    location_df %>% 
+      select(Locality, Place_Name, District, Admin_Name_3, Dist_Adm3, loc_pl, everything()) %>%
+      arrange(Locality) %>%
+      group_by(Locality, District) %>%
+      # get locality-district groups such that there are rows with mismatching district-admin3 OR mismatching locality-place_names
+      mutate(select_rank = case_when(
+        ((Dist_Adm3 == T) & (loc_pl == T)) ~ 1,
+        ((Dist_Adm3 == T) & (loc_pl == F)) ~ 2,
+        ((Dist_Adm3 == F) & (loc_pl == T)) ~ 3,
+        ((Dist_Adm3 == F) & (loc_pl == F)) ~ 4
+        )
+      ) %>%
+      filter(select_rank == 1) %>% 
+      ungroup()
+  ) %>% 
+  group_by(Locality, Place_Name, District, Admin_Name_3) %>% 
+  filter(Accuracy == max(Accuracy),
+         row_number() == 1) %>% 
+  ungroup()
+
+write.csv(ranked_filtered, "FINAL_ranked_filtered.csv")
+```
+

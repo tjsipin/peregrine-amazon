@@ -209,7 +209,7 @@ data %>%
 
 ```{r}
 # nu = 0
-ppool_syn.0 <- multisynth(Malaria ~ deforested, 
+ppool_syn.0 <- multisynth(Pfal.Malaria ~ deforested, 
                           unit = Code, 
                           time = Year, 
                           nu = 0,
@@ -219,6 +219,245 @@ ppool_syn.0
 summary(ppool_syn.0) 
 plot(ppool_syn.0)
 ```
+
+
+
+
+
+```{r}
+scmForestFragmentationFunc <- function(lagYear){
+  
+  # define idvar
+  ms.idvar <- "Code"
+  # define intvar
+  ms.intvar <- "deforested"
+  
+  # time-invariant covariates
+  
+  ms.covar.min <- c("mean_Elevation", "var_Elevation",
+                    "SWChange_abs", "SWRecurrence", "SWSeasonality", "SWOccurrence")
+  
+  # time-varying covariates
+  ms.match.out.min <- c("forest_density", "forest_fragmentation", "edge_loss",
+                        "NDVI", "LST_Day", "min_LST_Day", "max_LST_Day", "HNTL",
+                        "Precip", "min_Precip", "max_Precip", "min_Precip_Month", "max_Precip_Month")
+  
+  # result variable
+  ms.result.var <- "Pfal.Malaria"
+  
+  
+  full_data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>%
+    group_by(Code) %>%
+    mutate(intervention.st = lag(forest_fragmentation, n = lagYear) - forest_fragmentation > 0) %>%
+    ungroup()
+
+
+  intervention_data <- full_data %>%
+    filter(intervention.st == T) %>%
+    group_by(Code) %>%
+    filter(row_number() == 1) %>%
+    complete(Year = Year:2020) %>% # get all years after the initial mining presence
+    ungroup() %>%
+    select(Code, Year) %>%
+    unique() %>%
+    # use this key_pair column to access later
+    mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year))))
+
+  data <- full_data %>%
+    filter(!is.na(Pfal.Malaria)) %>%  # remove observations with missing Malaria
+    select(# ID vars
+      Code, Name, Country, Year,
+      Pfal.Malaria, intervention.st, forest_density,
+      # time-variant vars
+      land_use_change, forest_fragmentation, edge_loss,
+      NDVI, LST_Day, min_LST_Day, max_LST_Day,
+      HNTL, Precip, min_Precip, max_Precip, min_Precip_Month, max_Precip_Month,
+      # time-invariant vars
+      mean_Elevation, var_Elevation, SWChange_abs, SWRecurrence, SWSeasonality, SWOccurrence) %>%
+    mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year))))
+
+  # saveRDS(data, "~/peregrine_amazon/SCM/deforestation/data/data.rds")
+
+  # get year of first treatment called intervention
+  first_intervention_data <- intervention_data %>%
+    # group_by(Code) %>%
+    # filter(row_number() == 1) %>%
+    # ungroup() %>%
+    rename(intervention = Year) %>%
+    select(-key_pair)
+
+
+  data.use <- data %>%
+    mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) %>%
+    group_by(Code) %>%
+    # filter out Peru since there's no data for years before 2016
+    # filter(Country != "Peru") %>%
+    # mark the observations of deforestation in the municipality
+    mutate(deforested = key_pair %in% intervention_data$key_pair) %>%
+    # filter out municipalities that have incomplete data (missing for some years)
+    filter(n() == 2020 - 2007 + 1) %>%
+    ungroup() %>%
+    # balance the data set by code across all years
+    complete(nesting(Code), Year = full_seq(Year, period = 1)) %>%
+    as.data.frame() %>%
+    # merge data with first intervention years
+    full_join(first_intervention_data, by=c("Code")) %>%
+    mutate(intervention = ifelse(is.na(intervention),
+                                 Inf, intervention),
+           deforested = 1* (Year >= intervention)) %>%
+    # rearrange variables
+    select(Code, Name, Country, Year, Pfal.Malaria, intervention, everything(), -intervention.st, -key_pair) %>%
+    # multisynth needs a few years of pre-intervention in order to work
+    # need as many complete cases as possible, so only filter out missing data for covariates
+    filter(across(forest_density:SWOccurrence, ~ !is.na(.x)))
+
+  # saveRDS(data.use, "~/peregrine_amazon/SCM/deforestation/data/data.use.rds")
+  
+  aug.data <- data.use %>% 
+    mutate(intervention = ifelse(is.na(intervention),
+                                 Inf, intervention),
+           mined = 1* (Year >= intervention)) %>% 
+    select(Code, Name, Country, Year, Pfal.Malaria, mined, intervention, everything()) %>% 
+    # filter(complete.cases(.)) %>% 
+    filter(intervention>2008) %>% 
+    group_by(Code) %>% 
+    filter(n() > 1) %>% 
+    ungroup() %>% 
+    filter(across(all_of(c(ms.covar.min, ms.match.out.min)), ~ !is.na(.x)))
+
+  t0 <- Sys.time()
+
+  ppool_syn.0 <- multisynth(Pfal.Malaria ~ deforested |
+                              mean_Elevation + SWOccurrence +
+                              forest_density + forest_fragmentation +
+                              NDVI + LST_Day + HNTL +
+                              Precip, 
+                            unit = Code, 
+                            time = Year, 
+                            nu = 0,
+                            data = aug.data)
+
+  ppool_syn.0
+  summary(ppool_syn.0) 
+  
+  saveRDS(ppool_syn.0, paste0("~/peregrine_amazon/SCM/deforestation/models/ppool_syn_forestfragmentation_", lagYear, ".rds"))
+}
+
+scmForestEdgeLossFunc <- function(lagYear){
+  
+  full_data <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>%
+    group_by(Code) %>%
+    mutate(intervention.st = lag(edge_loss, n = lagYear) - edge_loss > 0) %>%
+    ungroup()
+
+
+  intervention_data <- full_data %>%
+    filter(intervention.st == T) %>%
+    group_by(Code) %>%
+    filter(row_number() == 1) %>%
+    complete(Year = Year:2020) %>% # get all years after the initial mining presence
+    ungroup() %>%
+    select(Code, Year) %>%
+    unique() %>%
+    # use this key_pair column to access later
+    mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year))))
+
+  data <- full_data %>%
+    filter(!is.na(Pfal.Malaria)) %>%  # remove observations with missing Malaria
+    select(# ID vars
+      Code, Name, Country, Year,
+      Pfal.Malaria, intervention.st, forest_density,
+      # time-variant vars
+      land_use_change, forest_fragmentation, edge_loss,
+      NDVI, LST_Day, min_LST_Day, max_LST_Day,
+      HNTL, Precip, min_Precip, max_Precip, min_Precip_Month, max_Precip_Month,
+      # time-invariant vars
+      mean_Elevation, var_Elevation, SWChange_abs, SWRecurrence, SWSeasonality, SWOccurrence) %>%
+    mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year))))
+
+  # saveRDS(data, "~/peregrine_amazon/SCM/deforestation/data/data.rds")
+
+  # get year of first treatment called intervention
+  first_intervention_data <- intervention_data %>%
+    # group_by(Code) %>%
+    # filter(row_number() == 1) %>%
+    # ungroup() %>%
+    rename(intervention = Year) %>%
+    select(-key_pair)
+
+
+  data.use <- data %>%
+    mutate(key_pair = as.character(paste0(as.character(Code), "_", as.character(Year)))) %>%
+    group_by(Code) %>%
+    # filter out Peru since there's no data for years before 2016
+    # filter(Country != "Peru") %>%
+    # mark the observations of deforestation in the municipality
+    mutate(deforested = key_pair %in% intervention_data$key_pair) %>%
+    # filter out municipalities that have incomplete data (missing for some years)
+    filter(n() == 2020 - 2007 + 1) %>%
+    ungroup() %>%
+    # balance the data set by code across all years
+    complete(nesting(Code), Year = full_seq(Year, period = 1)) %>%
+    as.data.frame() %>%
+    # merge data with first intervention years
+    full_join(first_intervention_data, by=c("Code")) %>%
+    mutate(intervention = ifelse(is.na(intervention),
+                                 Inf, intervention),
+           deforested = 1* (Year >= intervention)) %>%
+    # rearrange variables
+    select(Code, Name, Country, Year, Pfal.Malaria, intervention, everything(), -intervention.st, -key_pair) %>%
+    # multisynth needs a few years of pre-intervention in order to work
+    # need as many complete cases as possible, so only filter out missing data for covariates
+    filter(across(forest_density:SWOccurrence, ~ !is.na(.x)))
+
+  # saveRDS(data.use, "~/peregrine_amazon/SCM/deforestation/data/data.use.rds")
+  
+  aug.data <- data.use %>% 
+    mutate(intervention = ifelse(is.na(intervention),
+                                 Inf, intervention),
+           mined = 1* (Year >= intervention)) %>% 
+    select(Code, Name, Country, Year, Pfal.Malaria, mined, intervention, everything()) %>% 
+    # filter(complete.cases(.)) %>% 
+    filter(intervention>2008) %>% 
+    group_by(Code) %>% 
+    filter(n() > 1) %>% 
+    ungroup() %>% 
+    filter(across(all_of(c(ms.covar.min, ms.match.out.min)), ~ !is.na(.x)))
+
+  t0 <- Sys.time()
+
+  ppool_syn.0 <- multisynth(Pfal.Malaria ~ deforested |
+                              mean_Elevation + SWOccurrence +
+                              forest_density + forest_fragmentation +
+                              NDVI + LST_Day + HNTL +
+                              Precip, 
+                            unit = Code, 
+                            time = Year, 
+                            nu = 0,
+                            data = aug.data)
+
+  ppool_syn.0
+  summary(ppool_syn.0) 
+  
+  saveRDS(ppool_syn.0, paste0("~/peregrine_amazon/SCM/deforestation/models/ppool_syn_edgeloss_", lagYear, ".rds"))
+}
+```
+
+```{r}
+scmForestFragmentationFunc(1)
+scmForestFragmentationFunc(2)
+scmForestFragmentationFunc(3)
+scmForestFragmentationFunc(4)
+scmForestFragmentationFunc(5)
+
+scmForestEdgeLossFunc(1)
+scmForestEdgeLossFunc(2)
+scmForestEdgeLossFunc(3)
+scmForestEdgeLossFunc(4)
+scmForestEdgeLossFunc(5)
+```
+
+
 
 
 
