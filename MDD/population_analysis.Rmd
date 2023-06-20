@@ -185,15 +185,16 @@ Find $f(x)$.
 
 ```{r}
 # 268 localities
-pop_gam_268 <- mgcv::gam(log(population) ~ s(long, k = 268) + s(lat, k = 268), data = pop_1000_df)
-
-summary(pop_gam_268)
-
-plot(pop_gam_268)
-
-pop_gam_268$coefficients
-
-pop_gam_268 %>% gam.check()
+## THIS TAKES TOO LONG TO RUN
+# pop_gam_268 <- mgcv::gam(log(population) ~ s(long, k = 268) + s(lat, k = 268), data = pop_1000_df)
+# 
+# summary(pop_gam_268)
+# 
+# plot(pop_gam_268)
+# 
+# pop_gam_268$coefficients
+# 
+# pop_gam_268 %>% gam.check()
 
 # smoother gam (k = 19, 16) for use in GEE as cutoff points
 pop_gam_20 <- mgcv::gam(log(population) ~ s(long, k = 20) + s(lat, k = 20) + s(long, lat, fx = T), data = pop_1000_df)
@@ -227,23 +228,25 @@ fitted_pop_raster <- (raster(crs = "+proj=longlat +datum=WGS84", ext = extent(fi
   rasterize(fitted_pop_sf, .)) %>% 
   raster::as.array()
 
-colnames(fitted_pop_raster) <- c("long", "lat", "limit")
-
-## Find the maximum value within the 9-cell neighborhood of each cell
-b <- brick(fitted_pop_raster)
-r <- raster(fitted_pop_sf, crs = "+proj=longlat +datum=WGS84") 
-f <- function(X) max(X, na.rm=TRUE)
-ww <- matrix(1, nrow=3, ncol=3) ## Weight matrix for cells in moving window
-localmax <- focal(b[[4]], fun=f, w=ww, pad=TRUE, padValue=NA) # b[[4]] takes the fourth layer of the raster
-
-r2 <- b[[4]]==localmax
-
-## Get x-y coordinates of those cells that are local maxima
-maxXY <- xyFromCell(r2, Which(r2==1, cells=TRUE))
+# colnames(fitted_pop_raster) <- c("long", "lat", "limit")
 
 
-plot(b[[4]]) 
-plot(r2) 
+### USEFUL BUT COMPUTATIONALLY EXPENSIVE SO IGNORE
+# ## Find the maximum value within the 9-cell neighborhood of each cell
+# b <- brick(fitted_pop_raster)
+# r <- raster(fitted_pop_sf, crs = "+proj=longlat +datum=WGS84") 
+# f <- function(X) max(X, na.rm=TRUE)
+# ww <- matrix(1, nrow=3, ncol=3) ## Weight matrix for cells in moving window
+# localmax <- focal(b[[4]], fun=f, w=ww, pad=TRUE, padValue=NA) # b[[4]] takes the fourth layer of the raster
+# 
+# r2 <- b[[4]]==localmax
+# 
+# ## Get x-y coordinates of those cells that are local maxima
+# maxXY <- xyFromCell(r2, Which(r2==1, cells=TRUE))
+# 
+# 
+# plot(b[[4]]) 
+# plot(r2) 
 
 ## TODO: overlay localities over maxima
 
@@ -251,12 +254,12 @@ tiff::writeTIFF(fitted_pop_raster, "~/peregrine_amazon/MDD/tif/fitted_pop.tif")
 
 fitted_pop_tif <- tiff::readTIFF("~/peregrine_amazon/MDD/tif/fitted_pop.tif")
 
-(
-  ggplot(data = fitted_pop_tif %>% data.frame() %>% 
-         rename(long = X1, lat = X2, fitted = X3)) +
-    geom_raster(aes(x = long, y = lat))
-) %>% 
-  ggplotly()
+# (
+#   ggplot(data = fitted_pop_tif %>% data.frame() %>% 
+#          rename(long = X1, lat = X2, fitted = X3)) +
+#     geom_raster(aes(x = long, y = lat))
+# ) %>% 
+#   ggplotly()
 ```
 
 ```{r}
@@ -359,9 +362,12 @@ kclust_centroids <- st_as_sf(kclust$centers %>% as.data.frame(), coords = c("lon
 ggplot() +
   geom_point(data = datrain_aug,
              aes(x = long, y = lat, color = .cluster)) +
+  geom_sf(data = kclust_centroids) +
   theme(legend.position = "none")
 
 
+
+# interactive but eats up memory
 (
   ggplot() + 
   geom_point(data = datrain_aug,
@@ -382,6 +388,8 @@ all_aug <- augment(all_kclust, pop_1000_localities)
 all_kclust_centroids <- st_as_sf(all_kclust$centers %>% as.data.frame(), coords = c("long", "lat"))
 
 
+
+# knn cluster centroids vs. true localities
 (
   ggplot() + 
     geom_point(data = all_aug,
