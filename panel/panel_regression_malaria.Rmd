@@ -1,0 +1,515 @@
+## Load packages
+
+```{r}
+library(ggplot2)
+library(naniar)
+library(cowplot)
+library(plm)
+library(dplyr)
+library(lmtest)
+library(pglm)
+library(tidyr)
+library(ggforce)
+```
+
+
+## Set up panel data
+
+```{r}
+nonp_df <- readRDS("~/peregrine_amazon/data/annual/aad_2021_forests.rds") %>%
+  filter(!is.na(forest_fragmentation)) %>% 
+  filter(!is.na(Name)) %>% 
+  group_by(Code) %>% 
+  mutate(fragmentation_change = forest_fragmentation - dplyr::lag(forest_fragmentation),
+         prop_forest_change = forest_density - dplyr::lag(forest_density),
+         fragmentation_change_lag1 = dplyr::lag(forest_fragmentation) - dplyr::lag(forest_fragmentation, 2),
+         prop_forest_change_lag1 = dplyr::lag(forest_density) - dplyr::lag(forest_density, 2)) %>% 
+  ungroup()
+
+p_df <- plm::pdata.frame(nonp_df, index = c("Code", "Year"), row.names = F, stringsAsFactors = F) 
+```
+
+### Simple Regression Model
+
+```{r}
+### fragmentation_change
+
+# estimate simple regression model fragmentation_change
+malaria_lm_fc <- lm(Pfal.Malaria ~ fragmentation_change, data = p_df)
+
+summary(malaria_lm_fc)
+coeftest(malaria_lm_fc, vcov. = vcovHC, type = "HC1")
+
+ggplot() + geom_density(aes(malaria_lm_fc$residuals))
+
+# estimate simple regression model fragmentation_change_lag1
+malaria_lm_fcl1 <- lm(Pfal.Malaria ~ fragmentation_change_lag1, data = p_df)
+
+summary(malaria_lm_fcl1)
+coeftest(malaria_lm_fcl1, vcov. = vcovHC, type = "HC1")
+
+ggplot() + geom_density(aes(malaria_lm_fcl1$residuals))
+
+
+
+
+### prop_forest_change
+
+# estimate simple regression model prop_forest_change
+malaria_lm_pfc <- lm(Pfal.Malaria ~ prop_forest_change, data = p_df)
+
+summary(malaria_lm_pfc)
+coeftest(malaria_lm_pfc, vcov. = vcovHC, type = "HC1")
+
+ggplot() + geom_density(aes(malaria_lm_pfc$residuals))
+
+# estimate simple regression model fragmentation_change_lag1
+malaria_lm_pfcl1 <- lm(Pfal.Malaria ~ prop_forest_change_lag1, data = p_df)
+
+summary(malaria_lm_pfcl1)
+coeftest(malaria_lm_pfcl1, vcov. = vcovHC, type = "HC1")
+
+ggplot() + geom_density(aes(malaria_lm_pfcl1$residuals))
+```
+
+### Regression with Fixed Effects
+
+```{r}
+### fragmentation_change
+
+# estimate the fixed effects regression with plm()
+
+fc_fe_plm <- plm(
+  Pfal.Malaria ~ fragmentation_change,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fc_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fc_fe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+fcl1_fe_plm <- plm(
+  Pfal.Malaria ~ fragmentation_change_lag1,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fcl1_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fcl1_fe_plm)
+
+### prop_forest_change
+
+# estimate the fixed effects regression with plm()
+
+pfc_fe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(pfc_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfc_fe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+pfcl1_fe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change_lag1,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(pfcl1_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfcl1_fe_plm)
+```
+
+
+```{r}
+# combine the explanatory variables
+
+comprehensive_fe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change + prop_forest_change_lag1 + fragmentation_change + fragmentation_change_lag1,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(comprehensive_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(comprehensive_fe_plm)
+```
+
+### Regression with Time-Fixed Effects
+
+
+```{r}
+### fragmentation_change
+
+# estimate the fixed effects regression with plm()
+
+fc_tefe_plm <- plm(
+  Pfal.Malaria ~ fragmentation_change,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(fc_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(fc_tefe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+fcl1_tefe_plm <- plm(
+  Pfal.Malaria ~ fragmentation_change_lag1,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(fcl1_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(fcl1_tefe_plm)
+
+### prop_forest_change
+
+# estimate the fixed effects regression with plm()
+
+pfc_tefe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(pfc_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfc_tefe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+pfcl1_tefe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change_lag1,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(pfcl1_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfcl1_tefe_plm)
+```
+
+```{r}
+summary(fc_tefe_plm)
+summary(fcl1_tefe_plm)
+summary(pfc_tefe_plm)
+summary(pfcl1_tefe_plm)
+```
+
+
+Out of curiosity, we could try putting those explanatory variables together.
+
+```{r}
+# combine the explanatory variables
+
+comprehensive_tefe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change + prop_forest_change_lag1 + fragmentation_change + fragmentation_change_lag1,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(comprehensive_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(comprehensive_tefe_plm)
+```
+
+
+## Adding extra explanatory variables
+
+```{r}
+pfc_env_tefe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(pfc_env_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfc_env_tefe_plm)
+
+pfcl1_env_fe_plm <- plm(
+  Pfal.Malaria ~ prop_forest_change_lag1 + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(pfcl1_env_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfcl1_env_fe_plm)
+
+fc_env_fe_plm <- plm(
+  Pfal.Malaria ~ fragmentation_change + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fc_env_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fc_env_fe_plm)
+
+fcl1_env_fe_plm <- plm(
+  Pfal.Malaria ~ fragmentation_change_lag1 + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df,
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fcl1_env_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fcl1_env_fe_plm)
+```
+
+
+## Panel data 
+
+```{r}
+### fragmentation_change
+
+# estimate the fixed effects regression with plm()
+
+fc_fe_plm <- plm(
+  log(Pfal.Malaria) ~ fragmentation_change,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fc_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fc_fe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+fcl1_fe_plm <- plm(
+  log(Pfal.Malaria) ~ fragmentation_change_lag1,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fcl1_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fcl1_fe_plm)
+
+### prop_forest_change
+
+# estimate the fixed effects regression with plm()
+
+pfc_fe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(pfc_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfc_fe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+pfcl1_fe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change_lag1,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(pfcl1_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfcl1_fe_plm)
+```
+
+
+```{r}
+# combine the explanatory variables
+
+comprehensive_fe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change + prop_forest_change_lag1 + fragmentation_change + fragmentation_change_lag1,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(comprehensive_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(comprehensive_fe_plm)
+```
+
+### Regression with Time-Fixed Effects
+
+
+```{r}
+### fragmentation_change
+
+# estimate the fixed effects regression with plm()
+
+fc_tefe_plm <- plm(
+  log(Pfal.Malaria) ~ fragmentation_change,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(fc_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(fc_tefe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+fcl1_tefe_plm <- plm(
+  log(Pfal.Malaria) ~ fragmentation_change_lag1,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(fcl1_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(fcl1_tefe_plm)
+
+### prop_forest_change
+
+# estimate the fixed effects regression with plm()
+
+pfc_tefe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(pfc_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfc_tefe_plm)
+
+### fragmentation_change_lag1
+
+# estimate the fixed effects regression with plm()
+
+pfcl1_tefe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change_lag1,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(pfcl1_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfcl1_tefe_plm)
+```
+
+```{r}
+summary(fc_tefe_plm)
+summary(fcl1_tefe_plm)
+summary(pfc_tefe_plm)
+summary(pfcl1_tefe_plm)
+```
+
+
+Out of curiosity, we could try putting those explanatory variables together.
+
+```{r}
+# combine the explanatory variables
+
+comprehensive_tefe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change + prop_forest_change_lag1 + fragmentation_change + fragmentation_change_lag1,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(comprehensive_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(comprehensive_tefe_plm)
+```
+
+
+## Adding extra explanatory variables
+
+```{r}
+pfc_env_tefe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within",
+  effect = "twoways"
+)
+
+coeftest(pfc_env_tefe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfc_env_tefe_plm)
+
+pfcl1_env_fe_plm <- plm(
+  log(Pfal.Malaria) ~ prop_forest_change_lag1 + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(pfcl1_env_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(pfcl1_env_fe_plm)
+
+fc_env_fe_plm <- plm(
+  log(Pfal.Malaria) ~ fragmentation_change + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fc_env_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fc_env_fe_plm)
+
+fcl1_env_fe_plm <- plm(
+  log(Pfal.Malaria) ~ fragmentation_change_lag1 + HNTL + NDVI +
+    Precip + max_Precip_Month + min_Precip_Month + 
+    LST_Day + mean_Elevation + SWOccurrence,
+  data = p_df %>% filter(Pfal.Malaria > 0),
+  index = c("Code", "Year"),
+  model = "within"
+)
+
+coeftest(fcl1_env_fe_plm, vcov. = vcovHC, type = "HC1")
+summary(fcl1_env_fe_plm)
+```
+
+
+

@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/peregrine_amazon/MDD/")
 library(sf)
 library(raster)
 library(dplyr)
@@ -20,13 +21,13 @@ library(tidyr)
 ## Raster data
 
 ```{r data}
-pop = raster("~/peregrine_amazon/MDD/pop_region_mosaic.tif")
+pop = raster("tif/pop_region_mosaic.tif")
 pop_df = pop %>% 
   raster::as.data.frame() %>% 
   mutate(long = raster::coordinates(pop)[,1],
          lat = raster::coordinates(pop)[,2]) %>% 
   filter(!is.na(population))
-localities = read.csv("~/peregrine_amazon/MDD/FINAL_ranked_filtered.csv") %>% 
+localities = read.csv("FINAL_ranked_filtered.csv") %>% 
   dplyr::select(Locality, Longitude, Latitude) %>% 
   st_as_sf(coords = c("Longitude", "Latitude"))
 ```
